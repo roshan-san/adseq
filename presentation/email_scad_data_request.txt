@@ -1,0 +1,29 @@
+To: hong.liu@oregonstate.edu
+CC: [Dr. M. Shanthi Thangam's email]
+Subject: Request for MSU SCAD dataset – Long et al., Energy Convers. Manage. 365 (2026) 121811
+
+Dear Prof. Liu,
+
+I am a final-year student in the Department of Computer Science and Engineering with Artificial Intelligence at Sathyabama Institute of Science and Technology, Chennai, India, working under the guidance of Dr. M. Shanthi Thangam, Assistant Professor (copied).
+
+We read your paper "Reinforcement Learning-Based Modeling of a Multiple-Year Commercial Anaerobic Digestion System Treating Manure and Food Waste" (Energy Conversion and Management 365, 2026, 121811) with great interest. As the paper notes that the data is available on request, I am writing to ask whether you would be willing to share the MSU South Campus Anaerobic Digester (SCAD) dataset.
+
+Our project builds directly on your work. We compare recurrent neural networks (RNN, GRU and LSTM), which learn temporal memory from daily input sequences, with the lag-feature network described in your paper. We use the same targets (total biogas, CH4 % and H2S), the same 2014–2019 / 2020 train–test split, and an equal tuning budget for every model. Our pipeline is complete and tested; we only need the real data to run it.
+
+Ideally, we would need the daily records for 2014–2020 with the variables listed in Table 1 of your paper (feedstock quantities, pH, temperatures, HRT, Gas_Total, CH4 and H2S), in whatever form is convenient for you: raw or cleaned (the 1,942 valid days), as CSV or Excel.
+
+We will:
+- use the data only for this academic work and not share it with anyone else;
+- cite your paper and acknowledge you, MSU SCAD and the Anaerobic Digestion Research and Education Center in any presentation or publication;
+- share our code and results with you if you are interested.
+
+If a data-use agreement or permission from MSU is required, we are happy to follow that process.
+
+Thank you very much for your time and consideration.
+
+Kind regards,
+Roshan Jeyaruban R (Reg. No. 43731160)
+Akash Kumar K (Reg. No. 43731011)
+Dept. of CSE with Artificial Intelligence
+Sathyabama Institute of Science and Technology, Chennai, India
++91 93849 95250 | roshanjeyarubanr@gmail.com

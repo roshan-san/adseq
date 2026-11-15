@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+runs/
+wandb/
+data/raw/
+data/synthetic/
+*.pdf
+!docs/*.pdf
+.pytest_cache/
+.ruff_cache/
