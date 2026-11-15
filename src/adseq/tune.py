@@ -13,7 +13,7 @@ from pathlib import Path
 import wandb
 
 from .config import Config
-from .data import Dataset
+from .data import TARGET, Dataset
 from .models import PAPER_HP
 from .train import train_and_predict
 
@@ -44,18 +44,6 @@ def sweep_config(cfg: Config, target: str, name: str) -> dict:
     }
 
 
-def to_hp(c: dict, name: str) -> dict:
-    """Sweep config -> hyper-parameters that make_model / train_and_predict understand."""
-    hp = {k: c[k] for k in ("lr", "weight_decay", "batch_size", "dropout")}
-    if name in FNN_MODELS:
-        hp["hidden"] = [
-            c["width"] // 2**i for i in range(c["n_layers"])
-        ]  # e.g. 128-64, like the paper
-    else:
-        hp["hidden_size"], hp["num_layers"] = c["hidden_size"], c["num_layers"]
-    return hp
-
-
 def hp_file(cfg: Config, target: str, name: str) -> Path:
     return cfg.run_dir / "best_hp" / f"{target}__{name}.json"
 
@@ -76,7 +64,7 @@ def tune(cfg: Config, ds: Dataset, name: str) -> dict:
     if cfg.wandb_mode != "online":
         raise SystemExit("W&B Sweeps need --wandb-mode online (run `uv run wandb login` once).")
     os.environ.setdefault("WANDB_SILENT", "true")
-    target = ds.target
+    target = TARGET
     api = wandb.Api()
 
     # one sweep per (target, model); its id is saved so a re-run continues it
@@ -90,22 +78,18 @@ def tune(cfg: Config, ds: Dataset, name: str) -> dict:
         id_file.write_text(sweep_path)
 
     done = sum(r.state == "finished" for r in api.sweep(sweep_path).runs)
-    number = iter(range(done + 1, 10_000))  # readable run names: Biogas-gru-tune-07
 
     def trial() -> None:
         with wandb.init(
-            name=f"{target}-{name}-tune-{next(number):02d}",
             group=f"{cfg.name}-tune",
             job_type="tune",
             tags=[target, name],
             dir=cfg.run_dir,
         ) as run:
-            hp = to_hp(dict(run.config), name)
-
-            def log_curve(epoch, train_mse, val_rmse):
+            hp = dict(run.config)  # the sweep's parameters are exactly the model's hyper-parameters
+            _, info, curve = train_and_predict(name, hp, ds, cfg, seed=0)
+            for epoch, train_mse, val_rmse in curve:
                 run.log({"epoch_train_mse": train_mse, "epoch_val_rmse": val_rmse}, step=epoch)
-
-            _, info = train_and_predict(name, hp, ds, cfg, seed=0, on_epoch=log_curve)
             run.summary["val_rmse"] = info["val_rmse_scaled"]  # best epoch, the sweep's metric
             run.summary.update({"epochs": info["epochs"], "n_params": info["n_params"]})
 
@@ -119,7 +103,7 @@ def tune(cfg: Config, ds: Dataset, name: str) -> dict:
         )
 
     best_run = wandb.Api().sweep(sweep_path).best_run()  # fresh Api: no cached run list
-    best = to_hp(best_run.config, name)
+    best = dict(best_run.config)
     path = hp_file(cfg, target, name)
     path.parent.mkdir(exist_ok=True)
     path.write_text(json.dumps(best, indent=2))

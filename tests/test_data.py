@@ -20,10 +20,10 @@ def daily():
 
 def test_features_do_not_use_the_future(daily):
     day = daily.index[700]
-    before = make_features(daily, CFG).loc[day]
+    before = make_features(daily).loc[day]
     changed = daily.copy()
     changed.loc[day:, "Biogas"] *= 10  # tamper with day t and later
-    after = make_features(changed, CFG).loc[day]
+    after = make_features(changed).loc[day]
     assert before.equals(after)
 
 
@@ -51,7 +51,7 @@ def test_scaling_is_fit_on_the_training_period_only(daily):
 def test_minmax_dataset_matches_standard_except_for_scaling(daily):
     std, mm = (build_dataset(daily, CFG, s) for s in ("standard", "minmax"))
     assert std.dates.equals(mm.dates) and (std.split == mm.split).all()
-    assert std.feature_names == mm.feature_names
+    assert std.X.shape == mm.X.shape and std.X_seq.shape == mm.X_seq.shape
     tr = mm.part("train")
     assert mm.y[tr].min() == 0 and abs(mm.y[tr].max() - 1) < 1e-6
     assert np.allclose(mm.unscale(mm.y), std.unscale(std.y), atol=1e-3)

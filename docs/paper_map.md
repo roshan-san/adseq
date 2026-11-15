@@ -14,18 +14,15 @@ including references. Base paper = Long et al., *Energy Convers. Manage.* 365 (2
 | **IV-C. Training & Tuning** | Adam, MSE, gradient clipping 1.0, early stopping (patience 60) on validation RMSE. W&B Sweeps, Bayesian optimisation (cite Biewald 2020), **the same number of sweep runs for every tuned model**, and a search-space table; give the public sweep links as supplementary material | `train.py`, `tune.py: sweep_config` | `best_hp/*.json` → hyper-parameter table (L fixed at 15, not tuned) |
 | **IV-D. Evaluation Protocol** | RMSE, MAE, R², ±10 % accuracy (base paper's metrics + MAE; MAPE avoided because H₂S is near 0 ppm on many days). 10 seeds → mean ± std. Diebold–Mariano test on seed-averaged predictions with a Newey–West (HAC) variance, because daily loss differentials are autocorrelated (lag-1 ACF ≈ 0.4); cite Newey & West 1994 for the bandwidth. All models scored on **the same test days** | `metrics.py`, `evaluate.py` | – |
 | **V. Results** | Main table; which model wins, and by how much versus the base-paper FNN; p-values; test-period prediction plots; learning curves. Also compare with Schroer & Just's own 1-day-ahead MLP/ridge (MAPE ≈ 27 %) as published context | `report.py` | `results_table.tex`, `significance.csv`, `figures/test_*.pdf`, W&B learning curves |
-| **VI. Ablations & Discussion** | (a) **Window-FNN**: same L-day input without recurrence, so is the gain from recurrence or just from more input? (b) `--seq-inputs raw`: RNN with no hand-made lags (learns memory itself). (c) `--no-same-day-inputs`: strict 1-day-ahead forecasting. (d) window length: rerun with `--window 7` / `30` (main runs use L = 15, the base paper's longest lag). Why GRU vs LSTM. Limitations: one plant, one test year, biogas only (no CH₄/H₂S in the public data) | flags below | extra rows / small table |
+| **VI. Ablations & Discussion** | (a) **Window-FNN**: same L-day input without recurrence, so is the gain from recurrence or just from more input? (b) window length: rerun with `--window 7` / `30` (main runs use L = 15, the base paper's longest lag). Why GRU vs LSTM. Limitations: one plant, one test year, biogas only (no CH₄/H₂S in the public data) | flags below | extra rows / small table |
 | **VII. Conclusion** | One paragraph plus future work (multi-step horizons, other plants, control) | – | – |
 
 ## Ablation runs (each gets its own `--name`)
 
 ```bash
 uv run adseq run-all --name main                                     # main table
-uv run adseq run-all --name abl_raw_inputs --seq-inputs raw \
-    --models fnn_paper fnn_tuned rnn gru lstm                              # (b) no hand-made lags for RNNs
-uv run adseq run-all --name abl_strict --no-same-day-inputs            # (c) strict forecasting
 uv run adseq run-all --name abl_window30 --window 30 \
-    --models fnn_paper fnn_tuned window_fnn rnn gru lstm                   # (d) window length (FNNs re-scored on the same days)
+    --models fnn_paper fnn_tuned window_fnn rnn gru lstm                   # (b) window length (FNNs re-scored on the same days)
 ```
 
 ## Reviewer-proofing checklist

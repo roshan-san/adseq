@@ -11,7 +11,8 @@ from torch import nn
 
 # "scaling": the base paper min-max scales to [0, 1]; every other model uses standard scaling
 PAPER_HP = {
-    "hidden": [128, 64],
+    "width": 128,  # 128-64-1
+    "n_layers": 2,
     "dropout": 0.0,
     "lr": 1e-3,
     "weight_decay": 0.0,
@@ -22,10 +23,12 @@ WINDOW_MODELS = ("window_fnn", "rnn", "gru", "lstm")  # use the (N, L, F) input
 
 
 class FNN(nn.Module):
-    def __init__(self, n_in: int, hidden: list[int], dropout: float = 0.0):
+    """n_layers hidden layers, each half as wide as the one before: width=128, n_layers=2 -> 128-64."""
+
+    def __init__(self, n_in: int, width: int, n_layers: int, dropout: float = 0.0):
         super().__init__()
         layers = []
-        for h in hidden:
+        for h in (width // 2**i for i in range(n_layers)):
             layers += [nn.Linear(n_in, h), nn.ReLU(), nn.Dropout(dropout)]
             n_in = h
         layers.append(nn.Linear(n_in, 1))
@@ -56,7 +59,7 @@ class RecurrentNet(nn.Module):
 
 def make_model(name: str, hp: dict, n_features: int, window: int) -> nn.Module:
     if name in ("fnn_paper", "fnn_tuned"):
-        return FNN(n_features, hp["hidden"], hp["dropout"])
+        return FNN(n_features, hp["width"], hp["n_layers"], hp["dropout"])
     if name == "window_fnn":
-        return FNN(n_features * window, hp["hidden"], hp["dropout"])
+        return FNN(n_features * window, hp["width"], hp["n_layers"], hp["dropout"])
     return RecurrentNet(name, n_features, hp["hidden_size"], hp["num_layers"], hp["dropout"])

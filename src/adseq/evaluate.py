@@ -39,11 +39,10 @@ def evaluate(cfg: Config, daily: pd.DataFrame) -> pd.DataFrame:
                 mode=cfg.wandb_mode,
                 dir=cfg.run_dir,
             ) as run:
+                pred, info, curve = train_and_predict(name, hp, ds, cfg, seed)
                 # learning curve in scaled units; epoch_* so it can't clash with final metrics
-                def log_curve(epoch, train_mse, val_rmse, run=run):
+                for epoch, train_mse, val_rmse in curve:
                     run.log({"epoch_train_mse": train_mse, "epoch_val_rmse": val_rmse}, step=epoch)
-
-                pred, info = train_and_predict(name, hp, ds, cfg, seed, on_epoch=log_curve)
                 scores = {
                     split: regression_metrics(ds.y_true[ds.part(split)], pred[ds.part(split)])
                     for split in ("train", "val", "test")

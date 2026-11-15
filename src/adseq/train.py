@@ -5,7 +5,6 @@ and the weights from the best validation epoch are kept.
 """
 
 import copy
-from collections.abc import Callable
 
 import numpy as np
 import torch
@@ -22,11 +21,11 @@ def train_and_predict(
     ds: Dataset,
     cfg: Config,
     seed: int,
-    on_epoch: Callable[[int, float, float], None] | None = None,
-) -> tuple[np.ndarray, dict]:
-    """Returns predictions (original units) for every sample, plus training info."""
+) -> tuple[np.ndarray, dict, list[tuple[int, float, float]]]:
+    """Returns predictions (original units) for every sample, training info, and the learning
+    curve: one (epoch, mean train MSE, val RMSE) per epoch, both in scaled units."""
     if name == "persistence":  # tomorrow = today
-        return ds.y_prev, {"epochs": 0, "n_params": 0}
+        return ds.y_prev, {"epochs": 0, "n_params": 0}, []
 
     torch.manual_seed(seed)
     X = torch.from_numpy(ds.X_seq if name in WINDOW_MODELS else ds.X)
@@ -44,6 +43,7 @@ def train_and_predict(
 
     # epoch 0 = untrained weights, so there is always a state to restore
     best_rmse, best_state, best_epoch = val_rmse_now(), copy.deepcopy(model.state_dict()), 0
+    curve = []
     for epoch in range(1, cfg.max_epochs + 1):
         model.train()
         order = train[torch.randperm(len(train)).numpy()]
@@ -58,8 +58,7 @@ def train_and_predict(
             sse += loss.item() * len(batch)
 
         val_rmse = val_rmse_now()
-        if on_epoch:
-            on_epoch(epoch, sse / len(order), val_rmse)  # mean train MSE of the epoch
+        curve.append((epoch, sse / len(order), val_rmse))
         if val_rmse < best_rmse:
             best_rmse, best_state, best_epoch = val_rmse, copy.deepcopy(model.state_dict()), epoch
         elif epoch - best_epoch >= cfg.patience:
@@ -74,4 +73,4 @@ def train_and_predict(
         "val_rmse_scaled": best_rmse,
         "n_params": sum(p.numel() for p in model.parameters()),
     }
-    return pred, info
+    return pred, info, curve

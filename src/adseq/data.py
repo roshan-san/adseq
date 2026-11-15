@@ -40,50 +40,37 @@ VALID_RANGE = {"Dig1-T_degF": (80.0, 105.0), "Dig2-T_degF": (80.0, 105.0)}
 
 
 def clean_data(path: Path) -> pd.DataFrame:
-
-    # load the csv
+    # load the csv, dates from the Year/Month/Day columns
     df = pd.read_csv(path)
-
-    # build date column
-    dates = pd.to_datetime(df[["Year", "Month", "Day"]])
+    df.index = pd.DatetimeIndex(pd.to_datetime(df[["Year", "Month", "Day"]]))
     df = df.drop(columns=["Year", "Month", "Day"])
-
-    # drop text columns
-    df = df.apply(pd.to_numeric, errors="coerce").dropna(axis=1, how="all")
-
-    # set date as index
-    df.index = pd.DatetimeIndex(dates)
-    df = df[~df.index.duplicated()].sort_index()
 
     # remove impossible values
     for col, (lo, hi) in VALID_RANGE.items():
-        if col in df:
-            df[col] = df[col].where(df[col].between(lo, hi))
+        df[col] = df[col].where(df[col].between(lo, hi))
 
-    # one row per every day,with NaN for missing vals
+    # one row per calendar day, NaN for missing days
     df = df.asfreq("D")
 
-    # forward-fill short gaps
+    # forward-fill short gaps in the inputs; the target (labels) is never filled
     inputs = df.columns.drop(TARGET)
     df[inputs] = df[inputs].ffill(limit=FFILL_LIMIT)
 
     return df
 
 
-def make_features(df: pd.DataFrame, cfg: Config) -> pd.DataFrame:
-
+def make_features(df: pd.DataFrame) -> pd.DataFrame:
     # existing features
     X = df.drop(columns=TARGET)
 
-    # calender encoding
+    # calendar encoding
     t = df.index
     X["month_sin"] = np.sin(2 * np.pi * (t.month - 1) / 12)
     X["month_cos"] = np.cos(2 * np.pi * (t.month - 1) / 12)
     X["doy_sin"] = np.sin(2 * np.pi * (t.day_of_year - 1) / 365.25)
     X["doy_cos"] = np.cos(2 * np.pi * (t.day_of_year - 1) / 365.25)
 
-
-    # previous output as feature
+    # previous output as feature: past days only (shift(1) first)
     y_past = df[TARGET].ffill(limit=FFILL_LIMIT).shift(1)
 
     # lag and rolling features
@@ -95,19 +82,47 @@ def make_features(df: pd.DataFrame, cfg: Config) -> pd.DataFrame:
     return X
 
 
+def usable_days(X: pd.DataFrame, y: pd.Series, window: int) -> pd.DatetimeIndex:
+    """Day t is usable if its label exists and the last `window` days have complete inputs."""
+    complete = X.notna().all(axis=1)
+    history_ok = complete.rolling(window).sum() == window
+    return X.index[y.notna() & history_ok]
+
+
+def time_split(dates: pd.DatetimeIndex, test_start: str, val_frac: float) -> np.ndarray:
+    """Chronological: test from test_start on; before it, first (1 - val_frac) train, rest val."""
+    split = np.where(dates >= pd.Timestamp(test_start), "test", "train")
+    earlier = np.flatnonzero(split == "train")
+    n_val = round(len(earlier) * val_frac)
+    split[earlier[len(earlier) - n_val :]] = "val"
+    return split
+
+
+def fit_scaler(values, scaling: Literal["standard", "minmax"]):
+    """(offset, scale) so that scaled = (x - offset) / scale. Works per column on a DataFrame."""
+    if scaling == "standard":
+        return values.mean(), values.std()
+    return values.min(), values.max() - values.min()
+
+
+def make_windows(Xs: pd.DataFrame, dates: pd.DatetimeIndex, window: int) -> np.ndarray:
+    """(N, L, F): for each day t, the scaled features of days t-L+1..t."""
+    arr = Xs.to_numpy(np.float32)
+    pos = Xs.index.get_indexer(dates)
+    return np.stack([arr[p - window + 1 : p + 1] for p in pos])
+
+
 @dataclass
 class Dataset:
-    target: str
     dates: pd.DatetimeIndex  # day t of each sample
     split: np.ndarray  # "train" / "val" / "test"
-    X: np.ndarray  # (N, F)     features of day t          -> FNN input
-    X_seq: np.ndarray  # (N, L, F') features of days t-L+1..t -> RNN/GRU/LSTM input
+    X: np.ndarray  # (N, F)    features of day t          -> FNN input
+    X_seq: np.ndarray  # (N, L, F) features of days t-L+1..t -> RNN/GRU/LSTM input
     y: np.ndarray  # (N,) scaled target: (y - y_offset) / y_scale
     y_true: np.ndarray  # (N,) target in original units
     y_prev: np.ndarray  # (N,) yesterday's target (persistence baseline)
     y_offset: float
     y_scale: float
-    feature_names: list[str]
 
     def part(self, name: str) -> np.ndarray:
         return np.flatnonzero(self.split == name)
@@ -117,56 +132,29 @@ class Dataset:
 
 
 def build_dataset(
-    daily: pd.DataFrame,
+    df: pd.DataFrame,
     cfg: Config,
     scaling: Literal["standard", "minmax"] = "standard",
 ) -> Dataset:
-    X = make_features(daily, cfg)
-    y = daily[TARGET]
+    """scaling: standard (z-score) for our models; minmax ([0, 1]) as in the base paper."""
+    X, y = make_features(df), df[TARGET]
+    dates = usable_days(X, y, cfg.window)
+    split = time_split(dates, cfg.test_start, cfg.val_frac)
 
-    # usable day t: label exists and the last L days have complete inputs
-    row_ok = X.notna().all(axis=1)
-    history_ok = row_ok.rolling(cfg.window).sum() == cfg.window
-    dates = X.index[y.notna() & history_ok]
-
-    # chronological split: train (first 80% before test_start) | val (last 20%) | test
-    split = np.where(dates >= pd.Timestamp(cfg.test_start), "test", "train")
-    earlier = np.flatnonzero(split == "train")
-    n_val = round(len(earlier) * cfg.val_frac)
-    split[earlier[len(earlier) - n_val :]] = "val"
-
-    # scaling fitted on the training period only: x -> (x - offset) / scale
+    # scalers fit on the training period only
     train_dates = dates[split == "train"]
-    fit, y_fit = X[: train_dates.max()], y[train_dates]
-    if scaling == "standard":
-        offset, scale = fit.mean(), fit.std()
-        y_offset, y_scale = float(y_fit.mean()), float(y_fit.std())
-    else:
-        offset, scale = fit.min(), fit.max() - fit.min()
-        y_offset, y_scale = float(y_fit.min()), float(y_fit.max() - y_fit.min())
-    X = X.loc[:, scale > 0]  # drop columns that are constant during training
-    Xs = (X - offset[X.columns]) / scale[X.columns]
-
-    # per-day inputs for the sequence models
-    if cfg.seq_inputs == "full":
-        seq = Xs
-    else:  # "raw": no hand-made lag features, the RNN must learn the history itself
-        seq = Xs.drop(columns=[c for c in Xs if c.startswith(("lag_", "rolling_"))])
-        seq["y_prev"] = Xs["lag_1"]
-    seq_arr = seq.to_numpy(np.float32)
-    pos = X.index.get_indexer(dates)
-    X_seq = np.stack([seq_arr[p - cfg.window + 1 : p + 1] for p in pos])
+    offset, scale = fit_scaler(X[: train_dates.max()], scaling)
+    y_offset, y_scale = map(float, fit_scaler(y[train_dates], scaling))
+    Xs = (X - offset) / scale
 
     return Dataset(
-        target=TARGET,
         dates=dates,
         split=split,
         X=Xs.loc[dates].to_numpy(np.float32),
-        X_seq=X_seq,
+        X_seq=make_windows(Xs, dates, cfg.window),
         y=((y[dates] - y_offset) / y_scale).to_numpy(np.float32),
         y_true=y[dates].to_numpy(float),
         y_prev=X.loc[dates, "lag_1"].to_numpy(float),
         y_offset=y_offset,
         y_scale=y_scale,
-        feature_names=list(Xs.columns),
     )

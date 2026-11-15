@@ -20,7 +20,6 @@ class Config:
     test_start: str = "2022-04-01"
     val_frac: float = 0.2
     window: int = 15
-    seq_inputs: Literal["full", "raw"] = "full"
 
     n_trials: int = 40
     max_epochs: int = 1000
