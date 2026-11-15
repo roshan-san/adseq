@@ -64,7 +64,7 @@ def make_features(df: pd.DataFrame) -> pd.DataFrame:
     X = df.drop(columns=TARGET)
 
     # calendar encoding
-    t = df.index
+    t = pd.DatetimeIndex(df.index)  # tells the type checker the index holds dates
     X["month_sin"] = np.sin(2 * np.pi * (t.month - 1) / 12)
     X["month_cos"] = np.cos(2 * np.pi * (t.month - 1) / 12)
     X["doy_sin"] = np.sin(2 * np.pi * (t.day_of_year - 1) / 365.25)
@@ -86,7 +86,7 @@ def usable_days(X: pd.DataFrame, y: pd.Series, window: int) -> pd.DatetimeIndex:
     """Day t is usable if its label exists and the last `window` days have complete inputs."""
     complete = X.notna().all(axis=1)
     history_ok = complete.rolling(window).sum() == window
-    return X.index[y.notna() & history_ok]
+    return pd.DatetimeIndex(X.index[y.notna() & history_ok])
 
 
 def time_split(dates: pd.DatetimeIndex, test_start: str, val_frac: float) -> np.ndarray:
