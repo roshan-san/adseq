@@ -26,7 +26,7 @@ def evaluate(cfg: Config, daily: pd.DataFrame) -> pd.DataFrame:
     datasets = {s: build_dataset(daily, cfg, s) for s in ("standard", "minmax")}
     for name in cfg.models:
         hp = load_hp(cfg, target, name)
-        ds = datasets[hp.get("scaling", "standard")]  # same days and features, other scaler
+        ds = datasets[hp.get("scaling", cfg.scaling)]  # same days and features, other scaler
         seeds = (0,) if name == "persistence" else cfg.seeds  # persistence is deterministic
         preds = []
         for seed in seeds:

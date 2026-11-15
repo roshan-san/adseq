@@ -20,6 +20,8 @@ class Config:
     test_start: str = "2022-04-01"
     val_frac: float = 0.2
     window: int = 15
+    scaling: Literal["standard", "minmax"] = "standard"
+    """Input/target scaler for every model except fnn_paper (always min-max, as in the paper)."""
 
     n_trials: int = 40
     max_epochs: int = 1000

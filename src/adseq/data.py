@@ -19,7 +19,7 @@ Rules that keep the comparison fair and leakage-free (state these in the paper):
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 import numpy as np
 import pandas as pd
@@ -64,7 +64,7 @@ def make_features(df: pd.DataFrame) -> pd.DataFrame:
     X = df.drop(columns=TARGET)
 
     # calendar encoding
-    t = pd.DatetimeIndex(df.index)  # tells the type checker the index holds dates
+    t = cast(pd.DatetimeIndex, df.index)  # type hint only: clean_data made it a date index
     X["month_sin"] = np.sin(2 * np.pi * (t.month - 1) / 12)
     X["month_cos"] = np.cos(2 * np.pi * (t.month - 1) / 12)
     X["doy_sin"] = np.sin(2 * np.pi * (t.day_of_year - 1) / 365.25)
@@ -86,7 +86,7 @@ def usable_days(X: pd.DataFrame, y: pd.Series, window: int) -> pd.DatetimeIndex:
     """Day t is usable if its label exists and the last `window` days have complete inputs."""
     complete = X.notna().all(axis=1)
     history_ok = complete.rolling(window).sum() == window
-    return pd.DatetimeIndex(X.index[y.notna() & history_ok])
+    return cast(pd.DatetimeIndex, X.index[y.notna() & history_ok])
 
 
 def time_split(dates: pd.DatetimeIndex, test_start: str, val_frac: float) -> np.ndarray:
@@ -136,7 +136,7 @@ def build_dataset(
     cfg: Config,
     scaling: Literal["standard", "minmax"] = "standard",
 ) -> Dataset:
-    """scaling: standard (z-score) for our models; minmax ([0, 1]) as in the base paper."""
+    """scaling: standard (z-score) or minmax ([0, 1], as in the base paper); see --scaling."""
     X, y = make_features(df), df[TARGET]
     dates = usable_days(X, y, cfg.window)
     split = time_split(dates, cfg.test_start, cfg.val_frac)

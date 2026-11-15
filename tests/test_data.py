@@ -10,7 +10,7 @@ from adseq.data import build_dataset, clean_data, make_features
 
 CFG = Config()
 if not Path(CFG.data_path).exists():
-    pytest.skip("run `uv run adseq fetch` first", allow_module_level=True)
+    pytest.skip(f"{CFG.data_path} missing: download it (see README)", allow_module_level=True)
 
 
 @pytest.fixture(scope="module")

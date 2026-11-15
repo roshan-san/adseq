@@ -9,7 +9,7 @@ rnn/gru/lstm  recurrent encoder over the L-day window -> last hidden state -> li
 import torch
 from torch import nn
 
-# "scaling": the base paper min-max scales to [0, 1]; every other model uses standard scaling
+# "scaling": the base paper min-max scales to [0, 1]; every other model uses --scaling
 PAPER_HP = {
     "width": 128,  # 128-64-1
     "n_layers": 2,

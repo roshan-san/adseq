@@ -1,0 +1,167 @@
+PROJECT PHASE II - SLIDE CONTENT
+Title: Recurrent Neural Networks vs. Lag-Feature FNN for Forecasting a Full-Scale Anaerobic Digester
+Results from runs/main (full run finished 2026-11-15 17:50).
+
+======================================================================
+SLIDE 1 - ABSTRACT
+======================================================================
+- Anaerobic digestion (AD) turns organic waste into biogas. Its output depends on
+  past operating conditions, so accurate forecasting helps plant monitoring and planning.
+- The base paper (Long et al., 2026) predicts AD output with a feed-forward neural
+  network (FNN) on hand-picked lag and rolling-statistic features.
+- We compare Vanilla RNN, GRU and LSTM models, which learn temporal patterns directly
+  from input sequences, against this lag-feature FNN.
+- The study uses public daily data from a full-scale municipal co-digestion plant
+  (Muscatine, Iowa, USA) to forecast daily biogas production.
+- All models get the same data split, the same features and the same tuning budget.
+  They are scored with RMSE, MAE and R² over repeated runs and checked with a
+  statistical significance test.
+- The best recurrent model, Vanilla RNN, reached R² = 0.667, compared with R² = 0.658
+  for the base-paper FNN; the difference is not statistically significant.
+
+======================================================================
+SLIDE 2 - PROBLEM STATEMENT
+======================================================================
+- Biogas production in a full-scale digester changes with feed load, temperature and
+  process chemistry, and today's output depends on conditions over previous days.
+- Existing lag-feature FNN models only see the past through memory lengths chosen by
+  hand (fixed lag days and rolling windows), so patterns outside these windows are missed.
+- Most AD forecasting studies use lab-scale or private data, random train/test splits
+  that leak information, or untuned baselines, which makes model comparisons unreliable.
+- Problem: decide whether recurrent models (RNN, GRU, LSTM) forecast daily biogas at a
+  full-scale plant better than the lag-feature FNN under a fair, leakage-free and
+  reproducible protocol.
+
+======================================================================
+SLIDE 3 - LITERATURE SURVEY
+======================================================================
+(Columns as in Phase I: AUTHOR | JOURNAL NAME & YEAR | TITLE | DESCRIPTION | PROS | CONS)
+(The first 12 rows are copied from the Phase I deck; the last row is new in Phase II.)
+
+1. Beltramo, T. et al. | Eng. Agri. Env. Food / 2019 | Evaluation of Linear and Non-Linear Prediction Models Optimized with Metaheuristics for Anaerobic Digestion | Applied an optimized feed-forward neural network to estimate biogas production in an agricultural biogas plant. | Captures nonlinear relationships between operating parameters and biogas output. | Evaluated on a single agricultural-scale plant.
+
+2. Cruz, I. A. et al. | Bioresource Technology / 2022 | Application of Machine Learning in Anaerobic Digestion: Perspectives and Challenges | Reviewed machine-learning applications in AD for prediction, optimization, and process monitoring. | Broad perspective on ML applications and process-disturbance detection. | Highlights unresolved issues in data quality and model generalization.
+
+3. Gavabari, S. A. et al. | Renewable Energy / 2026 | Interpretable ANN-SHAP Framework for Multi-Objective Optimization of CH4 and H2S in Full-Scale Anaerobic Digestion | Combined an ANN with SHAP explainability to predict methane and hydrogen sulfide in full-scale AD. | Provides interpretable insight into input-variable contributions. | Added interpretability step increases modeling complexity.
+
+4. Gupta, R. et al. | Bioresource Technology / 2023 | Review of Explainable Machine Learning for Anaerobic Digestion | Reviewed techniques for understanding the contribution of input variables to AD model predictions. | Encourages models that are both accurate and interpretable. | Interpretability methods are not yet standardized across studies.
+
+5. Jeong, K. et al. | Water Research / 2021 | Prediction of Biogas Production in Anaerobic Co-Digestion of Organic Wastes Using Deep Learning Models | Applied deep-learning models to predict biogas production in co-digestion of organic wastes. | Demonstrated deep learning's potential for complex digestion systems. | Focused on co-digestion; generalization to other feedstocks untested.
+
+6. Ling, J. Y. X. et al. | Environ. Sci. Pollut. Res. / 2024 | Machine Learning Methods for the Modelling and Optimisation of Biogas Production from Anaerobic Digestion: A Review | Reviewed ML methods used for modeling and optimizing biogas production. | Consolidates a wide range of ML techniques applied to AD. | Review-level; lacks new experimental validation.
+
+7. Long, F. et al. | Energy Convers. Manag. / 2026 | Reinforcement Learning-Based Modeling of a Multiple-Year Commercial Anaerobic Digestion System Treating Manure and Food Waste | Used lagged and rolling statistical features with a feed-forward neural network to predict biogas, H2S, and CH4 on commercial-scale data. | Demonstrated the value of historical information for commercial AD prediction. | Relies on manually engineered temporal features rather than learned ones.
+
+8. Nair, V. V. et al. | Bioresource Technology / 2016 | Artificial Neural Network Based Modeling to Evaluate Methane Yield from Biogas in a Laboratory-Scale Anaerobic Bioreactor | Used an ANN to estimate methane yield from a laboratory-scale anaerobic bioreactor. | Simple architecture suitable for small-scale estimation tasks. | Limited to laboratory-scale conditions, not commercial systems.
+
+9. Rutland, H. et al. | Bioengineering / 2023 | A Systematic Review of Machine-Learning Solutions in Anaerobic Digestion | Systematically reviewed ML solutions for prediction, optimization, monitoring, and control in AD. | Identifies major application areas across the AD literature. | Notes persistent gaps in data quality and model generalization.
+
+10. Salamattalab, M. M. et al. | Waste Management / 2024 | Innovative Approach for Predicting Biogas Production from Large-Scale Anaerobic Digester Using LSTM Coupled with Genetic Algorithm | Combined an LSTM model with genetic-algorithm feature selection to predict biogas production at large scale. | Strong prediction performance across different input scenarios. | Genetic-algorithm tuning adds computational overhead.
+
+11. Seo, K. W. et al. | Bioresource Technology / 2021 | Prediction of Biogas Production Rate from Dry Anaerobic Digestion of Food Waste: Process-Based Approach vs. Recurrent Neural Network Black-Box Model | Compared a process-based model with an RNN black-box model for predicting biogas production. | Shows RNNs can match or exceed process-based approaches. | Black-box nature limits mechanistic interpretation.
+
+12. Shen, R. et al. | Chemical Engineering Journal / 2024 | Robust Prediction for Characteristics of Digestion Products in an Industrial-Scale Biogas Project via Time-Series and Non-Time-Series ML Algorithms | Compared non-time-series models with LSTM, CNN-LSTM, and attention-based LSTM for an industrial biogas project. | Demonstrates that temporal architectures can outperform non-time-series models. | Requires evaluating multiple architectures to identify the best performer.
+
+13. [NEW] Schroer, H. W. & Just, C. L. | ACS ES&T Engineering / 2024 | Feature Engineering and Supervised Machine Learning to Forecast Biogas Production during Municipal Anaerobic Co-Digestion | Engineered features from full-scale municipal co-digestion data (Muscatine, Iowa) and forecast biogas with supervised ML models; released the plant data publicly. | Real full-scale data that is openly available, which makes the work reproducible. | Uses non-recurrent models; temporal memory comes only from engineered features.
+
+======================================================================
+SLIDE 4 - SYSTEM ARCHITECTURE DIAGRAM
+======================================================================
+Diagram blocks (left to right, plain boxes and arrows, Phase I style):
+
+  [Muscatine WRRF daily data]
+        -> [Data Cleaning: remove invalid readings, fill short gaps]
+        -> [Feature Engineering: calendar, lag and rolling features]
+        -> [Chronological Split: Train | Validation | Test]
+        -> [Scaling: fit on training data only]
+        -> two branches:
+             Branch A: [Lag-feature input] -> [FNN baselines: base-paper FNN, tuned FNN]
+             Branch B: [Sequence windows]  -> [Recurrent models: RNN, GRU, LSTM]
+        -> [Equal-budget hyperparameter tuning (W&B Sweeps)]
+        -> [Multi-seed evaluation: RMSE, MAE, R², significance test]
+        -> [Best model + daily biogas forecast]
+
+Caption: Proposed AD Biogas Forecasting System Architecture
+
+======================================================================
+SLIDE 5 - UPDATED WORK (FURTHER WORK CARRIED OUT AFTER PHASE I)
+======================================================================
+--- 5a. Phase I -> Phase II changes ---
+- Dataset: the base paper's commercial data was not publicly available, so we moved to
+  the public Muscatine full-scale co-digestion dataset.
+- Target: daily biogas production (the public data has no CH4 or H2S measurements).
+- Implementation: the full pipeline was built in Python and PyTorch, from data loading
+  and preprocessing through training, tuning and evaluation.
+- Tuning: Bayesian hyperparameter search with Weights & Biases Sweeps, with the same
+  budget for every model.
+- Evaluation: repeated runs with different random seeds, plus a statistical test to
+  check whether differences between models are real.
+
+--- 5b. Experimental protocol ---
+- Chronological train / validation / test split; the test set covers the final year so
+  it includes a full seasonal cycle.
+- Scaling and features use past data only, so no information leaks from the future.
+- Every model is scored on the same test days with the same metrics.
+
+--- 5c. Models compared ---
+- Persistence: tomorrow's biogas equals today's (sanity baseline).
+- Base-paper FNN: reproduced as published.
+- Tuned FNN: same FNN, tuned with the same budget as the recurrent models.
+- Window FNN: same input window as the recurrent models but no recurrence (ablation).
+- Vanilla RNN, GRU and LSTM: learn temporal dependencies from input sequences.
+
+--- 5d. Results ---
+Model            | RMSE  | MAE   | R²
+Persistence      | 27.9  | 21.1  | 0.459
+Base-paper FNN   | 22.1  | 15.9  | 0.658
+Tuned FNN        | 23.8  | 17.3  | 0.604
+Window FNN       | 34.3  | 26.8  | 0.177
+Vanilla RNN      | 21.8  | 16.5  | 0.667
+GRU              | 22.3  | 16.5  | 0.654
+LSTM             | 25.4  | 18.8  | 0.551
+(Values are mean over repeated runs on the test year; RMSE and MAE in ft³/min.)
+
+- Vanilla RNN gave the best forecasts and GRU came close; both clearly beat the tuned
+  FNN, but neither was significantly better than the base-paper FNN.
+- LSTM was the weakest recurrent model and did not beat either FNN.
+- Window FNN (same input window, no recurrence) did much worse, so the gain comes
+  from recurrence itself, not just from seeing more past days.
+Figure: Measured vs. predicted daily biogas over the test year (base-paper FNN, GRU, LSTM).
+
+======================================================================
+SLIDE 6 - CONCLUSION
+======================================================================
+- Built a complete, reproducible forecasting pipeline for a full-scale anaerobic
+  digester using public plant data.
+- Compared Vanilla RNN, GRU and LSTM against the lag-feature FNN under a fair,
+  leakage-free, equal-budget protocol.
+- Vanilla RNN achieved the best accuracy (R² = 0.667), clearly ahead of the tuned FNN
+  (R² = 0.604) and level with the base-paper FNN (R² = 0.658).
+- LSTM (R² = 0.551) fell behind both FNNs, so recurrence does not help every
+  architecture equally.
+- Future work: multi-day-ahead forecasting, data from more plants, methane and H2S
+  targets, and use in plant control decisions.
+
+======================================================================
+SLIDE 7 - REFERENCES
+======================================================================
+[1]  Beltramo, T., & Hitzmann, B. (2019). Evaluation of the Linear and Non-Linear Prediction Models Optimized with Metaheuristics: Application to Anaerobic Digestion Processes. Engineering in Agriculture, Environment and Food.
+[2]  Biewald, L. (2020). Experiment Tracking with Weights and Biases. Software available from wandb.com.
+[3]  Cho, K., et al. (2014). Learning Phrase Representations Using RNN Encoder-Decoder for Statistical Machine Translation. EMNLP.
+[4]  Cruz, I. A., et al. (2022). Application of Machine Learning in Anaerobic Digestion: Perspectives and Challenges. Bioresource Technology.
+[5]  Diebold, F. X., & Mariano, R. S. (1995). Comparing Predictive Accuracy. Journal of Business & Economic Statistics.
+[6]  Elman, J. L. (1990). Finding Structure in Time. Cognitive Science.
+[7]  Gavabari, S. A., et al. (2026). Interpretable ANN-SHAP Framework for Multi-Objective Optimization of CH4 and H2S in Full-Scale Anaerobic Digestion. Renewable Energy.
+[8]  Gupta, R., et al. (2023). Review of Explainable Machine Learning for Anaerobic Digestion. Bioresource Technology.
+[9]  Hochreiter, S., & Schmidhuber, J. (1997). Long Short-Term Memory. Neural Computation.
+[10] Jeong, K., et al. (2021). Prediction of Biogas Production in Anaerobic Co-Digestion of Organic Wastes Using Deep Learning Models. Water Research.
+[11] Ling, J. Y. X., et al. (2024). Machine Learning Methods for the Modelling and Optimisation of Biogas Production from Anaerobic Digestion: A Review. Environmental Science and Pollution Research.
+[12] Long, F., et al. (2026). Reinforcement Learning-Based Modeling of a Multiple-Year Commercial Anaerobic Digestion System Treating Manure and Food Waste. Energy Conversion and Management, 365, 121811.
+[13] Nair, V. V., et al. (2016). Artificial Neural Network Based Modeling to Evaluate Methane Yield from Biogas in a Laboratory-Scale Anaerobic Bioreactor. Bioresource Technology.
+[14] Rumelhart, D. E., et al. (1986). Learning Representations by Back-Propagating Errors. Nature.
+[15] Rutland, H., et al. (2023). A Systematic Review of Machine-Learning Solutions in Anaerobic Digestion. Bioengineering.
+[16] Salamattalab, M. M., et al. (2024). Innovative Approach for Predicting Biogas Production from Large-Scale Anaerobic Digester Using LSTM Coupled with Genetic Algorithm. Waste Management.
+[17] Schroer, H. W., & Just, C. L. (2024). Feature Engineering and Supervised Machine Learning to Forecast Biogas Production during Municipal Anaerobic Co-Digestion. ACS ES&T Engineering.
+[18] Schroer, H. W., & Just, C. L. (2023). Muscatine WRRF anaerobic co-digestion operational data [Dataset]. University of Iowa. doi:10.25820/data.006715 (ODC-By 1.0).
+[19] Seo, K. W., et al. (2021). Prediction of Biogas Production Rate from Dry Anaerobic Digestion of Food Waste: Process-Based Approach vs. Recurrent Neural Network Black-Box Model. Bioresource Technology.
+[20] Shen, R., et al. (2024). Robust Prediction for Characteristics of Digestion Products in an Industrial-Scale Biogas Project via Time-Series and Non-Time-Series Machine Learning Algorithms. Chemical Engineering Journal.

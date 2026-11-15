@@ -14,15 +14,10 @@ from .tune import TUNED_MODELS, tune
 Cfg = Annotated[Config, tyro.conf.arg(name="")]
 
 
-# Public main dataset: Muscatine, IA water resource recovery facility, daily lab/operational data
-# 2020-01-01..2023-03-31. Schroer & Just (2023), doi:10.25820/data.006715, licence ODC-By 1.0.
-MUSCATINE_URL = "https://iro.uiowa.edu/view/fileRedirect?instCode=01IOWA_INST&filePid=13894605020002771&download=true"
-
-
 def tune_cmd(cfg: Cfg) -> None:
     """W&B Sweeps search for every tuned model (same run budget for all)."""
     cleaned_data = clean_data(cfg.data_path)
-    ds = build_dataset(cleaned_data, cfg)  # built once, shared by every tuned model
+    ds = build_dataset(cleaned_data, cfg, cfg.scaling)  # built once, shared by every tuned model
     for name in cfg.models:
         if name in TUNED_MODELS:
             tune(cfg, ds, name)
