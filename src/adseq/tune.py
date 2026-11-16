@@ -5,9 +5,8 @@ scored on the same validation days. Every trial is a W&B run (job_type "tune"), 
 search can be inspected online. The sweep id is saved in runs/<name>/sweeps/, so re-running
 continues the same sweep instead of starting a new one. Sweeps need --wandb-mode online.
 
-The sweep metric `val_rmse` is in *scaled* units: fine for ranking runs within one sweep, but
-not comparable across scalings (min-max values look ~6x smaller). To compare runs/main with
-runs/minmax use the original-unit value that the `[tune]` line prints.
+The sweep metric `val_rmse` is in scaled units (target min-max scaled on the training period);
+the `[tune]` line also prints it in ft^3/min.
 """
 
 import json
@@ -102,15 +101,13 @@ def tune(cfg: Config, ds: Dataset, name: str) -> dict:
 
     sweep = wandb.Api().sweep(sweep_path)  # fresh Api: no cached run list
     best_run = sweep.best_run()
-    # the scaler the HP were tuned with travels with them, so evaluate can't mix them up
-    best = dict(best_run.config) | {"scaling": cfg.scaling}
+    best = dict(best_run.config)
     path = hp_file(cfg, name)
     path.parent.mkdir(exist_ok=True)
     path.write_text(json.dumps(best, indent=2))
     val = best_run.summary["val_rmse"]
     print(
-        f"[tune] {TARGET} {name}: best val RMSE = {val * ds.y_scale:.2f} "
-        f"(scaled {val:.4f}, {cfg.scaling})  {best}"
+        f"[tune] {TARGET} {name}: best val RMSE = {val * ds.y_scale:.2f} (scaled {val:.4f})  {best}"
     )
     print(f"       sweep: {sweep.url}")
     return best

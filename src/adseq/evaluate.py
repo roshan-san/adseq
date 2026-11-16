@@ -19,10 +19,9 @@ from .tune import load_hp
 def evaluate(cfg: Config, daily: pd.DataFrame) -> pd.DataFrame:
     rows = []
     (cfg.run_dir / "preds").mkdir(exist_ok=True)
-    datasets = {s: build_dataset(daily, cfg, s) for s in ("standard", "minmax")}
+    ds = build_dataset(daily, cfg)
     for name in cfg.models:
         hp = load_hp(cfg, name)
-        ds = datasets[hp.get("scaling", cfg.scaling)]  # scaler the HP were tuned with
         seeds = (0,) if name == "persistence" else cfg.seeds  # persistence is deterministic
         preds = []
         for seed in seeds:

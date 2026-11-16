@@ -21,9 +21,6 @@ class Config:
     test_start: str = "2022-04-01"
     val_frac: float = 0.2
     window: int = 15
-    scaling: Literal["standard", "minmax"] = "standard"
-    """Scaler used by `tune` (saved with the best HP, so `evaluate` reuses it). fnn_paper is
-    always min-max, as in the paper."""
 
     n_trials: int = 40
     max_epochs: int = 1000
