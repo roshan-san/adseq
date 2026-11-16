@@ -5,13 +5,11 @@ hyper-parameters, the learning curve and the train/val/test metrics. Online by d
 --wandb-mode offline keeps them in runs/<name>/wandb/ for a later `wandb sync`.
 """
 
-import os
-
 import numpy as np
 import pandas as pd
 import wandb
 
-from .config import Config
+from .config import WANDB_PROJECT, Config
 from .data import TARGET, build_dataset
 from .metrics import regression_metrics
 from .train import train_and_predict
@@ -19,23 +17,21 @@ from .tune import load_hp
 
 
 def evaluate(cfg: Config, daily: pd.DataFrame) -> pd.DataFrame:
-    os.environ.setdefault("WANDB_SILENT", "true")
     rows = []
     (cfg.run_dir / "preds").mkdir(exist_ok=True)
-    target = TARGET
     datasets = {s: build_dataset(daily, cfg, s) for s in ("standard", "minmax")}
     for name in cfg.models:
-        hp = load_hp(cfg, target, name)
-        ds = datasets[hp.get("scaling", cfg.scaling)]  # same days and features, other scaler
+        hp = load_hp(cfg, name)
+        ds = datasets[hp.get("scaling", cfg.scaling)]  # scaler the HP were tuned with
         seeds = (0,) if name == "persistence" else cfg.seeds  # persistence is deterministic
         preds = []
         for seed in seeds:
             with wandb.init(
-                project="adseq",
+                project=WANDB_PROJECT,
                 group=cfg.name,
                 job_type="evaluate",
-                name=f"{target}-{name}-s{seed}",
-                config={"target": target, "model": name, "seed": seed, **hp},
+                name=f"{TARGET}-{name}-s{seed}",
+                config={"target": TARGET, "model": name, "seed": seed, **hp},
                 mode=cfg.wandb_mode,
                 dir=cfg.run_dir,
             ) as run:
@@ -53,16 +49,16 @@ def evaluate(cfg: Config, daily: pd.DataFrame) -> pd.DataFrame:
             preds.append(pred)
             for split, m in scores.items():
                 rows.append(
-                    {"target": target, "model": name, "seed": seed, "split": split, **m, **info}
+                    {"target": TARGET, "model": name, "seed": seed, "split": split, **m, **info}
                 )
             print(
-                f"[eval] {target:9s} {name:11s} seed={seed}  "
+                f"[eval] {TARGET:9s} {name:11s} seed={seed}  "
                 f"test RMSE={scores['test']['rmse']:.4g}  R2={scores['test']['r2']:.3f}"
             )
 
         # keep every prediction so the report can average seeds and run DM tests
         np.savez(
-            cfg.run_dir / "preds" / f"{target}__{name}.npz",
+            cfg.run_dir / "preds" / f"{TARGET}__{name}.npz",
             dates=ds.dates.strftime("%Y-%m-%d").to_numpy(str),
             split=ds.split,
             y_true=ds.y_true,

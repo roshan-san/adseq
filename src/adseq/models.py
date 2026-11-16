@@ -19,7 +19,9 @@ PAPER_HP = {
     "batch_size": 32,
     "scaling": "minmax",
 }
-WINDOW_MODELS = ("window_fnn", "rnn", "gru", "lstm")  # use the (N, L, F) input
+RECURRENT_MODELS = ("rnn", "gru", "lstm")
+WINDOW_MODELS = ("window_fnn", *RECURRENT_MODELS)  # use the (N, L, F) input
+TUNED_MODELS = ("fnn_tuned", *WINDOW_MODELS)  # searched with W&B Sweeps
 
 
 class FNN(nn.Module):
@@ -58,8 +60,7 @@ class RecurrentNet(nn.Module):
 
 
 def make_model(name: str, hp: dict, n_features: int, window: int) -> nn.Module:
-    if name in ("fnn_paper", "fnn_tuned"):
-        return FNN(n_features, hp["width"], hp["n_layers"], hp["dropout"])
-    if name == "window_fnn":
-        return FNN(n_features * window, hp["width"], hp["n_layers"], hp["dropout"])
-    return RecurrentNet(name, n_features, hp["hidden_size"], hp["num_layers"], hp["dropout"])
+    if name in RECURRENT_MODELS:
+        return RecurrentNet(name, n_features, hp["hidden_size"], hp["num_layers"], hp["dropout"])
+    n_in = n_features * window if name == "window_fnn" else n_features
+    return FNN(n_in, hp["width"], hp["n_layers"], hp["dropout"])

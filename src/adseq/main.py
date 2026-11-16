@@ -1,5 +1,6 @@
 """Command line (tyro). Run `uv run adseq --help` or `uv run adseq <command> --help`."""
 
+import os
 import urllib.request
 from typing import Annotated
 
@@ -8,8 +9,9 @@ import tyro
 from .config import Config
 from .data import build_dataset, clean_data
 from .evaluate import evaluate
+from .models import TUNED_MODELS
 from .report import make_report
-from .tune import TUNED_MODELS, tune
+from .tune import tune
 
 # flags read --window instead of --cfg.window
 Cfg = Annotated[Config, tyro.conf.arg(name="")]
@@ -28,8 +30,7 @@ def fetch_cmd(cfg: Cfg) -> None:
 
 def tune_cmd(cfg: Cfg) -> None:
     """W&B Sweeps search for every tuned model (same run budget for all)."""
-    cleaned_data = clean_data(cfg.data_path)
-    ds = build_dataset(cleaned_data, cfg, cfg.scaling)  # built once, shared by every tuned model
+    ds = build_dataset(clean_data(cfg.data_path), cfg)  # built once, shared by every tuned model
     for name in cfg.models:
         if name in TUNED_MODELS:
             tune(cfg, ds, name)
@@ -53,6 +54,7 @@ def run_all_cmd(cfg: Cfg) -> None:
 
 
 def main() -> None:
+    os.environ.setdefault("WANDB_SILENT", "true")
     tyro_map = {
         "fetch": fetch_cmd,
         "tune": tune_cmd,

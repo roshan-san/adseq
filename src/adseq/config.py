@@ -1,5 +1,5 @@
 """Every experiment setting, in one flat dataclass. tyro turns each field into a CLI flag
-(`--window 30`) and the docstring under it into the help text. See docs/paper_map.md.
+(`--window 30`) and the docstring under it into the help text.
 
 Fixed choices copied from the base paper (lags, rolling windows, ...) are constants in data.py.
 """
@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, get_args
 
+WANDB_PROJECT = "adseq"
 ModelName = Literal["persistence", "fnn_paper", "fnn_tuned", "window_fnn", "rnn", "gru", "lstm"]
 
 
@@ -21,7 +22,8 @@ class Config:
     val_frac: float = 0.2
     window: int = 15
     scaling: Literal["standard", "minmax"] = "standard"
-    """Input/target scaler for every model except fnn_paper (always min-max, as in the paper)."""
+    """Scaler used by `tune` (saved with the best HP, so `evaluate` reuses it). fnn_paper is
+    always min-max, as in the paper."""
 
     n_trials: int = 40
     max_epochs: int = 1000

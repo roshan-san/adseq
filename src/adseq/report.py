@@ -10,6 +10,7 @@ import pandas as pd
 from .config import Config
 from .data import TARGET
 from .metrics import diebold_mariano
+from .models import RECURRENT_MODELS
 
 NAMES = {
     "persistence": "Persistence",
@@ -44,7 +45,7 @@ def summary_table(cfg: Config) -> pd.DataFrame:
 def significance(cfg: Config) -> pd.DataFrame:
     """Diebold-Mariano test of each window model vs. each FNN baseline (seed-averaged preds)."""
     rows = []
-    for name in ("rnn", "gru", "lstm", "window_fnn"):
+    for name in (*RECURRENT_MODELS, "window_fnn"):
         for base in ("fnn_paper", "fnn_tuned"):
             a, b = load_preds(cfg, name), load_preds(cfg, base)
             if a is None or b is None:

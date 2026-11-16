@@ -4,5 +4,6 @@
   "dropout": 0.24850558554214255,
   "n_layers": 3,
   "batch_size": 16,
-  "weight_decay": 0.002578811845983347
+  "weight_decay": 0.002578811845983347,
+  "scaling": "standard"
 }

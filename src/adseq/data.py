@@ -29,7 +29,7 @@ from .config import Config
 TARGET = "Biogas"  # daily mean biogas flow, ft^3/min
 
 # Fixed by the base paper (Long et al., 2026, Table 1 / Sec. 2)
-LAGS = (1, 2, 7, 15)  # target lags in days (lag_1..lag_4)
+LAGS = (1, 2, 7, 15)  # target lags in days (the paper's lag_1..lag_4)
 ROLL_WINDOWS = (5, 10, 15)  # rolling mean/std windows in days
 FFILL_LIMIT = 15  # max days an *input* is carried forward over a gap; labels never are
 
@@ -74,8 +74,8 @@ def make_features(df: pd.DataFrame) -> pd.DataFrame:
     y_past = df[TARGET].ffill(limit=FFILL_LIMIT).shift(1)
 
     # lag and rolling features
-    for i, k in enumerate(LAGS, start=1):
-        X[f"lag_{i}"] = y_past.shift(k - 1)  # = y[t-k]
+    for k in LAGS:
+        X[f"lag_{k}"] = y_past.shift(k - 1)  # = y[t-k]
     for w in ROLL_WINDOWS:
         X[f"rolling_mean_{w}"] = y_past.rolling(w, min_periods=w // 2).mean()
         X[f"rolling_std_{w}"] = y_past.rolling(w, min_periods=w // 2).std()
@@ -120,7 +120,7 @@ class Dataset:
     X_seq: np.ndarray  # (N, L, F) features of days t-L+1..t -> RNN/GRU/LSTM input
     y: np.ndarray  # (N,) scaled target: (y - y_offset) / y_scale
     y_true: np.ndarray  # (N,) target in original units
-    y_prev: np.ndarray  # (N,) yesterday's target (persistence baseline)
+    y_prev: np.ndarray  # (N,) last measured target before day t (persistence baseline)
     y_offset: float
     y_scale: float
 
@@ -134,9 +134,10 @@ class Dataset:
 def build_dataset(
     df: pd.DataFrame,
     cfg: Config,
-    scaling: Literal["standard", "minmax"] = "standard",
+    scaling: Literal["standard", "minmax"] | None = None,
 ) -> Dataset:
-    """scaling: standard (z-score) or minmax ([0, 1], as in the base paper); see --scaling."""
+    """scaling: standard (z-score) or minmax ([0, 1], as in the base paper); default --scaling."""
+    scaling = scaling or cfg.scaling
     X, y = make_features(df), df[TARGET]
     dates = usable_days(X, y, cfg.window)
     split = time_split(dates, cfg.test_start, cfg.val_frac)

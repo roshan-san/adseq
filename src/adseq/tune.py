@@ -4,25 +4,24 @@ Every tuned model gets the same number of sweep runs (--n-trials), each trained 
 scored on the same validation days. Every trial is a W&B run (job_type "tune"), so the whole
 search can be inspected online. The sweep id is saved in runs/<name>/sweeps/, so re-running
 continues the same sweep instead of starting a new one. Sweeps need --wandb-mode online.
+
+The sweep metric `val_rmse` is in *scaled* units: fine for ranking runs within one sweep, but
+not comparable across scalings (min-max values look ~6x smaller). To compare runs/main with
+runs/minmax use the original-unit value that the `[tune]` line prints.
 """
 
 import json
-import os
 from pathlib import Path
 
 import wandb
 
-from .config import Config
+from .config import WANDB_PROJECT, Config
 from .data import TARGET, Dataset
-from .models import PAPER_HP
+from .models import PAPER_HP, RECURRENT_MODELS
 from .train import train_and_predict
 
-PROJECT = "adseq"
-TUNED_MODELS = ("fnn_tuned", "window_fnn", "rnn", "gru", "lstm")
-FNN_MODELS = ("fnn_tuned", "window_fnn")
 
-
-def sweep_config(cfg: Config, target: str, name: str) -> dict:
+def sweep_config(cfg: Config, name: str) -> dict:
     """Search space (paper Table: hyper-parameter ranges). Same shared ranges for every model."""
     params = {
         "lr": {"distribution": "log_uniform_values", "min": 1e-4, "max": 1e-2},
@@ -30,31 +29,31 @@ def sweep_config(cfg: Config, target: str, name: str) -> dict:
         "batch_size": {"values": [16, 32, 64, 128]},
         "dropout": {"distribution": "uniform", "min": 0.0, "max": 0.4},
     }
-    if name in FNN_MODELS:
-        params["n_layers"] = {"distribution": "int_uniform", "min": 1, "max": 3}
-        params["width"] = {"values": [32, 64, 128, 256]}
-    else:
+    if name in RECURRENT_MODELS:
         params["hidden_size"] = {"values": [16, 32, 64, 128]}
         params["num_layers"] = {"distribution": "int_uniform", "min": 1, "max": 2}
+    else:  # fnn_tuned, window_fnn
+        params["n_layers"] = {"distribution": "int_uniform", "min": 1, "max": 3}
+        params["width"] = {"values": [32, 64, 128, 256]}
     return {
-        "name": f"{cfg.name}/{target}/{name}",
+        "name": f"{cfg.name}/{TARGET}/{name}",
         "method": "bayes",
         "metric": {"name": "val_rmse", "goal": "minimize"},
         "parameters": params,
     }
 
 
-def hp_file(cfg: Config, target: str, name: str) -> Path:
-    return cfg.run_dir / "best_hp" / f"{target}__{name}.json"
+def hp_file(cfg: Config, name: str) -> Path:
+    return cfg.run_dir / "best_hp" / f"{TARGET}__{name}.json"
 
 
-def load_hp(cfg: Config, target: str, name: str) -> dict:
+def load_hp(cfg: Config, name: str) -> dict:
     """Best sweep run for tuned models; fnn_paper uses the base paper's fixed HP."""
     if name == "persistence":
         return {}
     if name == "fnn_paper":
         return dict(PAPER_HP)
-    path = hp_file(cfg, target, name)
+    path = hp_file(cfg, name)
     if not path.exists():
         raise FileNotFoundError(f"{path} missing: run `adseq tune --name {cfg.name}` first")
     return json.loads(path.read_text())
@@ -63,19 +62,18 @@ def load_hp(cfg: Config, target: str, name: str) -> dict:
 def tune(cfg: Config, ds: Dataset, name: str) -> dict:
     if cfg.wandb_mode != "online":
         raise SystemExit("W&B Sweeps need --wandb-mode online (run `uv run wandb login` once).")
-    os.environ.setdefault("WANDB_SILENT", "true")
-    target = TARGET
     api = wandb.Api()
 
-    # one sweep per (target, model); its id is saved so a re-run continues it
-    id_file = cfg.run_dir / "sweeps" / f"{target}__{name}.txt"
+    # one sweep per model; its id is saved so a re-run continues it
+    id_file = cfg.run_dir / "sweeps" / f"{TARGET}__{name}.txt"
     if id_file.exists():
         sweep_path = id_file.read_text().strip()
     else:
-        sweep_id = wandb.sweep(sweep_config(cfg, target, name), project=PROJECT)
-        sweep_path = f"{api.default_entity}/{PROJECT}/{sweep_id}"
+        sweep_id = wandb.sweep(sweep_config(cfg, name), project=WANDB_PROJECT)
+        sweep_path = f"{api.default_entity}/{WANDB_PROJECT}/{sweep_id}"
         id_file.parent.mkdir(exist_ok=True)
         id_file.write_text(sweep_path)
+    entity, _, sweep_id = sweep_path.split("/")
 
     done = sum(r.state == "finished" for r in api.sweep(sweep_path).runs)
 
@@ -83,7 +81,7 @@ def tune(cfg: Config, ds: Dataset, name: str) -> dict:
         with wandb.init(
             group=f"{cfg.name}-tune",
             job_type="tune",
-            tags=[target, name],
+            tags=[TARGET, name],
             dir=cfg.run_dir,
         ) as run:
             hp = dict(run.config)  # the sweep's parameters are exactly the model's hyper-parameters
@@ -95,22 +93,24 @@ def tune(cfg: Config, ds: Dataset, name: str) -> dict:
 
     if cfg.n_trials > done:
         wandb.agent(
-            sweep_path.split("/")[-1],
+            sweep_id,
             function=trial,
-            entity=sweep_path.split("/")[0],
-            project=PROJECT,
+            entity=entity,
+            project=WANDB_PROJECT,
             count=cfg.n_trials - done,
         )
 
-    best_run = wandb.Api().sweep(sweep_path).best_run()  # fresh Api: no cached run list
-    best = dict(best_run.config)
-    path = hp_file(cfg, target, name)
+    sweep = wandb.Api().sweep(sweep_path)  # fresh Api: no cached run list
+    best_run = sweep.best_run()
+    # the scaler the HP were tuned with travels with them, so evaluate can't mix them up
+    best = dict(best_run.config) | {"scaling": cfg.scaling}
+    path = hp_file(cfg, name)
     path.parent.mkdir(exist_ok=True)
     path.write_text(json.dumps(best, indent=2))
+    val = best_run.summary["val_rmse"]
     print(
-        f"[tune] {target} {name}: best val RMSE (scaled) = {best_run.summary['val_rmse']:.4f}  {best}"
+        f"[tune] {TARGET} {name}: best val RMSE = {val * ds.y_scale:.2f} "
+        f"(scaled {val:.4f}, {cfg.scaling})  {best}"
     )
-    print(
-        f"       sweep: https://wandb.ai/{sweep_path.replace(f'/{PROJECT}/', f'/{PROJECT}/sweeps/')}"
-    )
+    print(f"       sweep: {sweep.url}")
     return best

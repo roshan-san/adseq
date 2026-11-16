@@ -4,5 +4,6 @@
   "batch_size": 32,
   "num_layers": 2,
   "hidden_size": 128,
-  "weight_decay": 0.00881576558426951
+  "weight_decay": 0.00881576558426951,
+  "scaling": "standard"
 }
