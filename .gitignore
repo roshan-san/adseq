@@ -4,13 +4,17 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
-# W&B local files (the runs are already stored online at wandb.ai)
+# experiment outputs: regenerate with `uv run adseq run-all --name <name>`
+runs/
+
+# W&B local files (the runs are already stored online in W&B)
 wandb/
-runs/*/wandb/
 demo/
 
-# third-party papers (copyrighted); regenerate figures with `uv run adseq report`
+# downloaded data: `uv run adseq fetch`
+data/raw/
+
+# third-party papers (copyrighted) and generated figures
 *.pdf
-!docs/*.pdf
 
 data/synthetic/

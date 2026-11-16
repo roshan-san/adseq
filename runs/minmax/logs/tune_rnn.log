@@ -1,4 +1,0 @@
-Create sweep with ID: smtquhsf
-Sweep URL: https://forge.coreweave.com/wandb/demo/adseq/sweeps/smtquhsf
-[tune] Biogas rnn: best val RMSE (scaled) = 0.0644  {'lr': 0.0034990052681500303, 'dropout': 0.2213967778340309, 'batch_size': 64, 'num_layers': 2, 'hidden_size': 16, 'weight_decay': 0.000923629443328014}
-       sweep: https://wandb.ai/demo/adseq/sweeps/smtquhsf
