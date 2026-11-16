@@ -44,17 +44,8 @@ def test_every_target_day_has_a_full_window(daily):
 def test_scaling_is_fit_on_the_training_period_only(daily):
     ds = build_dataset(daily, CFG)
     tr = ds.part("train")
-    assert abs(ds.y[tr].mean()) < 1e-4 and abs(ds.y[tr].std(ddof=1) - 1) < 1e-3
+    assert ds.y[tr].min() == 0 and abs(ds.y[tr].max() - 1) < 1e-6
     assert np.allclose(ds.unscale(ds.y), ds.y_true, atol=1e-3)
-
-
-def test_minmax_dataset_matches_standard_except_for_scaling(daily):
-    std, mm = (build_dataset(daily, CFG, s) for s in ("standard", "minmax"))
-    assert std.dates.equals(mm.dates) and (std.split == mm.split).all()
-    assert std.X.shape == mm.X.shape and std.X_seq.shape == mm.X_seq.shape
-    tr = mm.part("train")
-    assert mm.y[tr].min() == 0 and abs(mm.y[tr].max() - 1) < 1e-6
-    assert np.allclose(mm.unscale(mm.y), std.unscale(std.y), atol=1e-3)
 
 
 def test_implausible_digester_temperatures_are_removed(daily):

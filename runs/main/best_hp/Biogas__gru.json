@@ -1,9 +1,0 @@
-{
-  "lr": 0.008478233160541306,
-  "dropout": 0.03264050101347138,
-  "batch_size": 32,
-  "num_layers": 1,
-  "hidden_size": 128,
-  "weight_decay": 0.004325599242908615,
-  "scaling": "standard"
-}

@@ -270,8 +270,8 @@ month and day of the year encoded as sine and cosine pairs; the target lagged by
 days; and rolling means and standard deviations of the target over 5, 10 and 15 days. The
 lagged and rolling features are computed from days before $t$ only, so the label of day $t$
 never enters its own inputs. We drop the year number used in \cite{long2026}: with fewer than
-two training years it could only extrapolate. The published FNN keeps its min--max scaling to
-$[0,1]$; all other models use z-score scaling. Both scalers are fit on the training period only.
+two training years it could only extrapolate. As in \cite{long2026}, inputs and target are min--max
+scaled to $[0,1]$ for every model, with the scalers fit on the training period only.
 
 \subsection{Models}
 \emph{Persistence} predicts that today equals yesterday, $\hat{y}_t=y_{t-1}$; a useful model

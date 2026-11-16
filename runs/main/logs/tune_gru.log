@@ -1,4 +1,0 @@
-Create sweep with ID: h28dvtfc
-Sweep URL: https://forge.coreweave.com/wandb/demo/adseq/sweeps/h28dvtfc
-[tune] Biogas gru: best val RMSE (scaled) = 0.3840  {'lr': 0.008478233160541306, 'dropout': 0.03264050101347138, 'batch_size': 32, 'num_layers': 1, 'hidden_size': 128, 'weight_decay': 0.004325599242908615}
-       sweep: https://wandb.ai/demo/adseq/sweeps/h28dvtfc

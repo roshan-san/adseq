@@ -13,13 +13,13 @@ Rules that keep the comparison fair and leakage-free (state these in the paper):
   1. Data is put on a calendar-daily index, so "lag 7" really is 7 days ago.
   2. Every target-derived input uses only days < t.
   3. Short gaps in inputs are forward-filled (past values only); labels are never filled.
-  4. Scalers are fit on the training period only (standard; min-max for the base paper's FNN).
+  4. Min-max scalers ([0, 1], as in the base paper) are fit on the training period only.
   5. All models are scored on exactly the same test days.
 """
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, cast
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -98,10 +98,9 @@ def time_split(dates: pd.DatetimeIndex, test_start: str, val_frac: float) -> np.
     return split
 
 
-def fit_scaler(values, scaling: Literal["standard", "minmax"]):
-    """(offset, scale) so that scaled = (x - offset) / scale. Works per column on a DataFrame."""
-    if scaling == "standard":
-        return values.mean(), values.std()
+def fit_minmax(values):
+    """(offset, scale) so that scaled = (x - offset) / scale lies in [0, 1] on `values`.
+    Works per column on a DataFrame."""
     return values.min(), values.max() - values.min()
 
 
@@ -131,21 +130,15 @@ class Dataset:
         return y_scaled * self.y_scale + self.y_offset
 
 
-def build_dataset(
-    df: pd.DataFrame,
-    cfg: Config,
-    scaling: Literal["standard", "minmax"] | None = None,
-) -> Dataset:
-    """scaling: standard (z-score) or minmax ([0, 1], as in the base paper); default --scaling."""
-    scaling = scaling or cfg.scaling
+def build_dataset(df: pd.DataFrame, cfg: Config) -> Dataset:
     X, y = make_features(df), df[TARGET]
     dates = usable_days(X, y, cfg.window)
     split = time_split(dates, cfg.test_start, cfg.val_frac)
 
     # scalers fit on the training period only
     train_dates = dates[split == "train"]
-    offset, scale = fit_scaler(X[: train_dates.max()], scaling)
-    y_offset, y_scale = map(float, fit_scaler(y[train_dates], scaling))
+    offset, scale = fit_minmax(X[: train_dates.max()])
+    y_offset, y_scale = map(float, fit_minmax(y[train_dates]))
     Xs = (X - offset) / scale
 
     return Dataset(
