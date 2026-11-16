@@ -1,5 +1,6 @@
 """Command line (tyro). Run `uv run adseq --help` or `uv run adseq <command> --help`."""
 
+import urllib.request
 from typing import Annotated
 
 import tyro
@@ -12,6 +13,17 @@ from .tune import TUNED_MODELS, tune
 
 # flags read --window instead of --cfg.window
 Cfg = Annotated[Config, tyro.conf.arg(name="")]
+
+# Public main dataset: Muscatine, IA water resource recovery facility, daily lab/operational data
+# 2020-01-01..2023-03-31. Schroer & Just (2023), doi:10.25820/data.006715, licence ODC-By 1.0.
+MUSCATINE_URL = "https://iro.uiowa.edu/view/fileRedirect?instCode=01IOWA_INST&filePid=13894605020002771&download=true"
+
+
+def fetch_cmd(cfg: Cfg) -> None:
+    """Download the Muscatine LABS-raw.csv to --data-path."""
+    cfg.data_path.parent.mkdir(parents=True, exist_ok=True)
+    urllib.request.urlretrieve(MUSCATINE_URL, cfg.data_path)
+    print(f"saved {cfg.data_path}")
 
 
 def tune_cmd(cfg: Cfg) -> None:
@@ -42,6 +54,7 @@ def run_all_cmd(cfg: Cfg) -> None:
 
 def main() -> None:
     tyro_map = {
+        "fetch": fetch_cmd,
         "tune": tune_cmd,
         "evaluate": evaluate_cmd,
         "report": report_cmd,

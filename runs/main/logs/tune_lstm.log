@@ -1,0 +1,4 @@
+Create sweep with ID: lchxnru5
+Sweep URL: https://forge.coreweave.com/wandb/demo/adseq/sweeps/lchxnru5
+[tune] Biogas lstm: best val RMSE (scaled) = 0.3547  {'lr': 0.006257514243948733, 'dropout': 0.1227494370418595, 'batch_size': 16, 'num_layers': 1, 'hidden_size': 128, 'weight_decay': 4.4324979297333626e-05}
+       sweep: https://wandb.ai/demo/adseq/sweeps/lchxnru5

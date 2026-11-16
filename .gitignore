@@ -1,10 +1,16 @@
+# environment / caches
 .venv/
 __pycache__/
-runs/
-wandb/
-data/raw/
-data/synthetic/
-*.pdf
-!docs/*.pdf
 .pytest_cache/
 .ruff_cache/
+
+# W&B local files (the runs are already stored online at wandb.ai)
+wandb/
+runs/*/wandb/
+demo/
+
+# third-party papers (copyrighted); regenerate figures with `uv run adseq report`
+*.pdf
+!docs/*.pdf
+
+data/synthetic/

@@ -1,6 +1,6 @@
 PROJECT PHASE II - SLIDE CONTENT
 Title: Recurrent Neural Networks vs. Lag-Feature FNN for Forecasting a Full-Scale Anaerobic Digester
-Results from runs/main (full run finished 2026-11-15 17:50).
+Results from runs/minmax (min-max scaling, full run finished 2026-11-15 19:16).
 
 ======================================================================
 SLIDE 1 - ABSTRACT
@@ -16,8 +16,8 @@ SLIDE 1 - ABSTRACT
 - All models get the same data split, the same features and the same tuning budget.
   They are scored with RMSE, MAE and R² over repeated runs and checked with a
   statistical significance test.
-- The best recurrent model, Vanilla RNN, reached R² = 0.667, compared with R² = 0.658
-  for the base-paper FNN; the difference is not statistically significant.
+- The best recurrent model, Vanilla RNN, reached R² = 0.742, compared with R² = 0.659
+  for the base-paper FNN; the improvement is statistically significant.
 
 ======================================================================
 SLIDE 2 - PROBLEM STATEMENT
@@ -73,7 +73,7 @@ Diagram blocks (left to right, plain boxes and arrows, Phase I style):
         -> [Data Cleaning: remove invalid readings, fill short gaps]
         -> [Feature Engineering: calendar, lag and rolling features]
         -> [Chronological Split: Train | Validation | Test]
-        -> [Scaling: fit on training data only]
+        -> [Min-max scaling: fit on training data only]
         -> two branches:
              Branch A: [Lag-feature input] -> [FNN baselines: base-paper FNN, tuned FNN]
              Branch B: [Sequence windows]  -> [Recurrent models: RNN, GRU, LSTM]
@@ -101,6 +101,8 @@ SLIDE 5 - UPDATED WORK (FURTHER WORK CARRIED OUT AFTER PHASE I)
 - Chronological train / validation / test split; the test set covers the final year so
   it includes a full seasonal cycle.
 - Scaling and features use past data only, so no information leaks from the future.
+- All inputs are min-max scaled to [0, 1], as in the base paper; this gave lower
+  validation error than standard scaling for every tuned model.
 - Every model is scored on the same test days with the same metrics.
 
 --- 5c. Models compared ---
@@ -113,17 +115,17 @@ SLIDE 5 - UPDATED WORK (FURTHER WORK CARRIED OUT AFTER PHASE I)
 --- 5d. Results ---
 Model            | RMSE  | MAE   | R²
 Persistence      | 27.9  | 21.1  | 0.459
-Base-paper FNN   | 22.1  | 15.9  | 0.658
-Tuned FNN        | 23.8  | 17.3  | 0.604
-Window FNN       | 34.3  | 26.8  | 0.177
-Vanilla RNN      | 21.8  | 16.5  | 0.667
-GRU              | 22.3  | 16.5  | 0.654
-LSTM             | 25.4  | 18.8  | 0.551
+Base-paper FNN   | 22.1  | 15.9  | 0.659
+Tuned FNN        | 21.6  | 15.6  | 0.673
+Window FNN       | 27.4  | 21.3  | 0.477
+Vanilla RNN      | 19.2  | 14.0  | 0.742
+GRU              | 19.9  | 14.7  | 0.725
+LSTM             | 22.9  | 16.8  | 0.631
 (Values are mean over repeated runs on the test year; RMSE and MAE in ft³/min.)
 
-- Vanilla RNN gave the best forecasts and GRU came close; both clearly beat the tuned
-  FNN, but neither was significantly better than the base-paper FNN.
-- LSTM was the weakest recurrent model and did not beat either FNN.
+- Vanilla RNN gave the best forecasts and GRU came close; both were significantly
+  better than the base-paper FNN and the tuned FNN.
+- LSTM was the weakest recurrent model and performed about the same as the FNNs.
 - Window FNN (same input window, no recurrence) did much worse, so the gain comes
   from recurrence itself, not just from seeing more past days.
 Figure: Measured vs. predicted daily biogas over the test year (base-paper FNN, GRU, LSTM).
@@ -135,9 +137,10 @@ SLIDE 6 - CONCLUSION
   digester using public plant data.
 - Compared Vanilla RNN, GRU and LSTM against the lag-feature FNN under a fair,
   leakage-free, equal-budget protocol.
-- Vanilla RNN achieved the best accuracy (R² = 0.667), clearly ahead of the tuned FNN
-  (R² = 0.604) and level with the base-paper FNN (R² = 0.658).
-- LSTM (R² = 0.551) fell behind both FNNs, so recurrence does not help every
+- Vanilla RNN achieved the best accuracy (R² = 0.742), significantly better than the
+  base-paper FNN (R² = 0.659) and the tuned FNN (R² = 0.673); GRU was close behind
+  (R² = 0.725).
+- LSTM (R² = 0.631) did no better than the FNNs, so recurrence does not help every
   architecture equally.
 - Future work: multi-day-ahead forecasting, data from more plants, methane and H2S
   targets, and use in plant control decisions.
