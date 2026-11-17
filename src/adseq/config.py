@@ -1,15 +1,21 @@
 """Every experiment setting, in one flat dataclass. tyro turns each field into a CLI flag
-(`--window 30`) and the docstring under it into the help text.
-
-Fixed choices copied from the base paper (lags, rolling windows, ...) are constants in data.py.
-"""
+(`--stride 30`) and the docstring under it into the help text."""
 
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, get_args
 
 WANDB_PROJECT = "adseq"
-ModelName = Literal["persistence", "fnn_paper", "fnn_tuned", "window_fnn", "rnn", "gru", "lstm"]
+ModelName = Literal[
+    "persistence",
+    "ridge",
+    "rnn",
+    "gru",
+    "lstm",
+    "rnn_res",
+    "gru_res",
+    "lstm_res",
+]
 
 
 @dataclass
@@ -17,15 +23,16 @@ class Config:
     name: str = "main"
     models: tuple[ModelName, ...] = get_args(ModelName)
 
-    data_path: Path = Path("data/raw/muscatine_labs.csv")
-    test_start: str = "2022-04-01"
+    data_path: Path = Path("data/raw/muscatine_scada.csv")
+    """SCADA-raw.csv; scripts/run_schroer.py turns it into their processed data set."""
     val_frac: float = 0.2
-    window: int = 15
+    stride: int = 60
+    """Train / val use a random 1/stride of their minutes (every test minute is always scored)."""
 
-    n_trials: int = 40
-    max_epochs: int = 1000
-    patience: int = 60
-    seeds: tuple[int, ...] = tuple(range(10))
+    n_trials: int = 20
+    max_epochs: int = 300
+    patience: int = 20
+    seeds: tuple[int, ...] = tuple(range(5))
     wandb_mode: Literal["online", "offline", "disabled"] = "online"
 
     @property

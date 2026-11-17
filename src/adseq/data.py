@@ -1,154 +1,130 @@
-"""Paper Sec. III-IV-A: load data, build features, split by time, scale, make windows.
+"""Data: Schroer & Just's own processed SCADA data set, then splits and windows for our models.
 
-Dataset: Muscatine, IA WRRF, LABS-raw.csv (Schroer & Just 2023, doi:10.25820/data.006715).
-Year/Month/Day, 21 operational columns, target Biogas = daily mean biogas flow (ft^3/min):
-  feeds      V-TWAS_gal, V-PS_gal, V-HSW_gal (sludges, high-strength waste), FOG_gal
-  digesters  Dig1/Dig2 -T_degF, -pH, -alk_mgL, -VFA_mgL, -FOS-TAC; SRT (days)
-  feed lab   HSW-VS_percent, HSW-COD_mgL, TWAS-VS_percent, PS-VS_percent
-  plant      Q-influent_MGD, BOD-influent_mgL
-(The data dictionary's descriptions of TWAS-VS and PS-VS are swapped; trust the names.)
-The authors' pre-cleaning: no rows 2021-04-06..06-27 (meter outage), no VFA before 2020-04-21.
+Step 1, theirs: scripts/run_schroer.py runs their notebooks unmodified (doi:10.5281/zenodo.8360096)
+on SCADA-raw.csv (Muscatine, IA WRRF, doi:10.25820/data.006715) ->
+reference/schroer2024/SCADA/SCADA-FINAL.csv: 491,761 minute rows, target "Forecast" = mean biogas
+flow over the next 24 h (ft^3/min). We use the 36 inputs of their final MLP.
 
-Rules that keep the comparison fair and leakage-free (state these in the paper):
-  1. Data is put on a calendar-daily index, so "lag 7" really is 7 days ago.
-  2. Every target-derived input uses only days < t.
-  3. Short gaps in inputs are forward-filled (past values only); labels are never filled.
-  4. Min-max scalers ([0, 1], as in the base paper) are fit on the training period only.
-  5. All models are scored on exactly the same test days.
+Step 2, ours:
+  - test = their test set: the last 20 % of rows, every row scored (98,353 minutes)
+  - validation = the last `val_frac` of their training rows; the 24 h before validation and
+    before test are dropped from train / val, so no training label overlaps a later period
+  - min-max scalers fit on training rows only
+  - train / val: a fixed random 1/`stride` of the minutes (neighbours are near-duplicates)
+  - each sample minute t gets a window of the features at t, t-60 min, ..., t-(L-1)*60 min
 """
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
 
 import numpy as np
 import pandas as pd
 
 from .config import Config
 
-TARGET = "Biogas"  # daily mean biogas flow, ft^3/min
-
-# Fixed by the base paper (Long et al., 2026, Table 1 / Sec. 2)
-LAGS = (1, 2, 7, 15)  # target lags in days (the paper's lag_1..lag_4)
-ROLL_WINDOWS = (5, 10, 15)  # rolling mean/std windows in days
-FFILL_LIMIT = 15  # max days an *input* is carried forward over a gap; labels never are
-
-# Physically implausible readings -> missing (then forward-filled like any gap). A 1,840 m^3
-# mesophilic tank cannot swing 30 F in a day: Dig2-T reads 95.0, 121.5, 126.1, 92.1 on
-# 2022-04-09..12. Cold spells down to 85 F (winter 2020/21) are plausible and kept.
-VALID_RANGE = {"Dig1-T_degF": (80.0, 105.0), "Dig2-T_degF": (80.0, 105.0)}
+TARGET = "Forecast"  # mean biogas flow over the next 24 h, ft^3/min (their name)
+PERSISTENCE = "Biogas_prev_hour_avg"  # mean of the previous clock hour (their baseline)
+HORIZON = 1440  # minutes ahead the target reaches
+STEP = 60  # minutes between window steps
+WINDOWS = (12, 24, 48, 72)  # hours of history a recurrent model may be tuned to
+MAX_WINDOW = max(WINDOWS)  # every sample has this much history, so any tuned window fits
+PROCESSED = Path("reference/schroer2024/SCADA/SCADA-FINAL.csv")  # their notebook's output
+MLP_DROPS = ["day_sin", "day_cos", "D2_TEMPERATURE", "Q-influent_MGD"]  # their SCADA-MLP, cell 0
 
 
-def clean_data(path: Path) -> pd.DataFrame:
-    # load the csv, dates from the Year/Month/Day columns
-    df = pd.read_csv(path)
-    df.index = pd.DatetimeIndex(pd.to_datetime(df[["Year", "Month", "Day"]]))
-    df = df.drop(columns=["Year", "Month", "Day"])
-
-    # remove impossible values
-    for col, (lo, hi) in VALID_RANGE.items():
-        df[col] = df[col].where(df[col].between(lo, hi))
-
-    # one row per calendar day, NaN for missing days
-    df = df.asfreq("D")
-
-    # forward-fill short gaps in the inputs; the target (labels) is never filled
-    inputs = df.columns.drop(TARGET)
-    df[inputs] = df[inputs].ffill(limit=FFILL_LIMIT)
-
-    return df
+def load_processed() -> pd.DataFrame:
+    """Their model-ready data set, with the inputs of their final MLP."""
+    if not PROCESSED.exists():
+        raise FileNotFoundError(f"{PROCESSED} missing: run scripts/run_schroer.py (docstring)")
+    return pd.read_csv(PROCESSED, index_col=0, parse_dates=True).drop(columns=MLP_DROPS)
 
 
-def make_features(df: pd.DataFrame) -> pd.DataFrame:
-    # existing features
-    X = df.drop(columns=TARGET)
-
-    # calendar encoding
-    t = cast(pd.DatetimeIndex, df.index)  # type hint only: clean_data made it a date index
-    X["month_sin"] = np.sin(2 * np.pi * (t.month - 1) / 12)
-    X["month_cos"] = np.cos(2 * np.pi * (t.month - 1) / 12)
-    X["doy_sin"] = np.sin(2 * np.pi * (t.day_of_year - 1) / 365.25)
-    X["doy_cos"] = np.cos(2 * np.pi * (t.day_of_year - 1) / 365.25)
-
-    # previous output as feature: past days only (shift(1) first)
-    y_past = df[TARGET].ffill(limit=FFILL_LIMIT).shift(1)
-
-    # lag and rolling features
-    for k in LAGS:
-        X[f"lag_{k}"] = y_past.shift(k - 1)  # = y[t-k]
-    for w in ROLL_WINDOWS:
-        X[f"rolling_mean_{w}"] = y_past.rolling(w, min_periods=w // 2).mean()
-        X[f"rolling_std_{w}"] = y_past.rolling(w, min_periods=w // 2).std()
-    return X
-
-
-def usable_days(X: pd.DataFrame, y: pd.Series, window: int) -> pd.DatetimeIndex:
-    """Day t is usable if its label exists and the last `window` days have complete inputs."""
-    complete = X.notna().all(axis=1)
-    history_ok = complete.rolling(window).sum() == window
-    return cast(pd.DatetimeIndex, X.index[y.notna() & history_ok])
-
-
-def time_split(dates: pd.DatetimeIndex, test_start: str, val_frac: float) -> np.ndarray:
-    """Chronological: test from test_start on; before it, first (1 - val_frac) train, rest val."""
-    split = np.where(dates >= pd.Timestamp(test_start), "test", "train")
-    earlier = np.flatnonzero(split == "train")
-    n_val = round(len(earlier) * val_frac)
-    split[earlier[len(earlier) - n_val :]] = "val"
-    return split
-
-
-def fit_minmax(values):
-    """(offset, scale) so that scaled = (x - offset) / scale lies in [0, 1] on `values`.
-    Works per column on a DataFrame."""
-    return values.min(), values.max() - values.min()
-
-
-def make_windows(Xs: pd.DataFrame, dates: pd.DatetimeIndex, window: int) -> np.ndarray:
-    """(N, L, F): for each day t, the scaled features of days t-L+1..t."""
-    arr = Xs.to_numpy(np.float32)
-    pos = Xs.index.get_indexer(dates)
-    return np.stack([arr[p - window + 1 : p + 1] for p in pos])
+def time_split(dates: pd.DatetimeIndex, val_frac: float) -> np.ndarray:
+    """Their 80/20 test split (sklearn train_test_split, shuffle=False), our val split of the
+    training rows, and 24-h "gap" rows before val and before test."""
+    n = len(dates)
+    n_train = n - math.ceil(0.2 * n)
+    split = np.array(["train"] * n_train + ["test"] * (n - n_train), dtype=object)
+    n_val = round(n_train * val_frac)
+    split[n_train - n_val : n_train] = "val"
+    gap = pd.Timedelta(minutes=HORIZON)
+    test0, val0 = dates[n_train], dates[n_train - n_val]
+    split[(split == "val") & (dates >= test0 - gap)] = "gap"
+    split[(split == "train") & (dates >= val0 - gap)] = "gap"
+    return split.astype(str)
 
 
 @dataclass
 class Dataset:
-    dates: pd.DatetimeIndex  # day t of each sample
+    dates: pd.DatetimeIndex  # sample minute t
     split: np.ndarray  # "train" / "val" / "test"
-    X: np.ndarray  # (N, F)    features of day t          -> FNN input
-    X_seq: np.ndarray  # (N, L, F) features of days t-L+1..t -> RNN/GRU/LSTM input
+    grid: np.ndarray  # (minutes, F) scaled features on a regular minute grid
+    pos: np.ndarray  # (N,) row of each sample in the grid
     y: np.ndarray  # (N,) scaled target: (y - y_offset) / y_scale
-    y_true: np.ndarray  # (N,) target in original units
-    y_prev: np.ndarray  # (N,) last measured target before day t (persistence baseline)
+    y_true: np.ndarray  # (N,) their target, ft^3/min
+    y_prev: np.ndarray  # (N,) their persistence baseline, ft^3/min
     y_offset: float
     y_scale: float
+    n_features: int
+
+    @property
+    def X(self) -> np.ndarray:
+        """(N, F) features of minute t -> ridge."""
+        return self.grid[self.pos]
+
+    def windows(self, idx: np.ndarray, window: int) -> np.ndarray:
+        """(len(idx), L, F): features at t-(L-1)*60 min, ..., t-60 min, t."""
+        if not 1 <= window <= MAX_WINDOW:  # longer would wrap negative indices to the test period
+            raise ValueError(f"window {window} h outside 1..{MAX_WINDOW}")
+        lags = STEP * np.arange(window - 1, -1, -1)
+        return self.grid[self.pos[idx, None] - lags]
 
     def part(self, name: str) -> np.ndarray:
         return np.flatnonzero(self.split == name)
 
+    def scale(self, y: np.ndarray) -> np.ndarray:
+        """ft^3/min -> the scaled units the models are trained in."""
+        return (y - self.y_offset) / self.y_scale
+
     def unscale(self, y_scaled: np.ndarray) -> np.ndarray:
+        """Scaled units -> ft^3/min."""
         return y_scaled * self.y_scale + self.y_offset
 
 
 def build_dataset(df: pd.DataFrame, cfg: Config) -> Dataset:
-    X, y = make_features(df), df[TARGET]
-    dates = usable_days(X, y, cfg.window)
-    split = time_split(dates, cfg.test_start, cfg.val_frac)
+    split = time_split(df.index, cfg.val_frac)
+    features = df.columns.drop(TARGET)
 
-    # scalers fit on the training period only
-    train_dates = dates[split == "train"]
-    offset, scale = fit_minmax(X[: train_dates.max()])
-    y_offset, y_scale = map(float, fit_minmax(y[train_dates]))
-    Xs = (X - offset) / scale
+    # scalers fit on the training rows only
+    train = df[split == "train"]
+    lo, hi = train[features].min(), train[features].max()
+    y_offset, y_scale = float(train[TARGET].min()), float(train[TARGET].max() - train[TARGET].min())
 
+    # regular minute grid so "60 min earlier" is one fixed offset; their dropped minutes are
+    # carried forward from the last row (past values only)
+    full = pd.date_range(df.index[0], df.index[-1], freq="min")
+    grid = ((df[features] - lo) / (hi - lo).replace(0, 1)).reindex(full).ffill()
+    pos_all = full.get_indexer(df.index)
+
+    # samples: every row of the test set; a fixed random 1/stride of the train / val minutes
+    # (so every minute of the hour is seen); all with MAX_WINDOW hours of history
+    sampled = np.random.default_rng(0).random(len(df)) < 1 / cfg.stride
+    keep = (split == "test") | (np.isin(split, ("train", "val")) & sampled)
+    keep &= pos_all >= STEP * (MAX_WINDOW - 1)
+    if not keep[split == "test"].all():
+        raise ValueError("a test row lacks a full window; lower MAX_WINDOW")
+
+    s = df[keep]
     return Dataset(
-        dates=dates,
-        split=split,
-        X=Xs.loc[dates].to_numpy(np.float32),
-        X_seq=make_windows(Xs, dates, cfg.window),
-        y=((y[dates] - y_offset) / y_scale).to_numpy(np.float32),
-        y_true=y[dates].to_numpy(float),
-        y_prev=X.loc[dates, "lag_1"].to_numpy(float),
+        dates=pd.DatetimeIndex(s.index),
+        split=split[keep],
+        grid=grid.to_numpy(np.float32),
+        pos=pos_all[keep],
+        y=((s[TARGET] - y_offset) / y_scale).to_numpy(np.float32),  # = Dataset.scale
+        y_true=s[TARGET].to_numpy(float),
+        y_prev=s[PERSISTENCE].to_numpy(float),
         y_offset=y_offset,
         y_scale=y_scale,
+        n_features=len(features),
     )

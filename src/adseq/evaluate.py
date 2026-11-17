@@ -1,8 +1,12 @@
-"""Paper Sec. IV-D / V: train every model with several seeds and score it on the test period.
+"""Train every model with several seeds and score it on the test period.
 
 Each (model, seed) is a Weights & Biases run in project "adseq", grouped by --name:
 hyper-parameters, the learning curve and the train/val/test metrics. Online by default;
 --wandb-mode offline keeps them in runs/<name>/wandb/ for a later `wandb sync`.
+
+Outputs, one file per model (so models can be evaluated in parallel terminals):
+  runs/<name>/metrics/<model>.csv   one row per (seed, split)
+  runs/<name>/preds/<model>.npz     every seed's predictions, for the report's DM tests
 """
 
 import numpy as np
@@ -10,68 +14,59 @@ import pandas as pd
 import wandb
 
 from .config import WANDB_PROJECT, Config
-from .data import TARGET, build_dataset
+from .data import Dataset, build_dataset
 from .metrics import regression_metrics
-from .train import train_and_predict
+from .models import UNTRAINED_MODELS
+from .train import log_curve, train_and_predict
 from .tune import load_hp
 
+SPLITS = ("train", "val", "test")
 
-def evaluate(cfg: Config, daily: pd.DataFrame) -> pd.DataFrame:
-    rows = []
-    (cfg.run_dir / "preds").mkdir(exist_ok=True)
-    ds = build_dataset(daily, cfg)
-    for name in cfg.models:
-        hp = load_hp(cfg, name)
-        seeds = (0,) if name == "persistence" else cfg.seeds  # persistence is deterministic
-        preds = []
-        for seed in seeds:
-            with wandb.init(
-                project=WANDB_PROJECT,
-                group=cfg.name,
-                job_type="evaluate",
-                name=f"{TARGET}-{name}-s{seed}",
-                config={"target": TARGET, "model": name, "seed": seed, **hp},
-                mode=cfg.wandb_mode,
-                dir=cfg.run_dir,
-            ) as run:
-                pred, info, curve = train_and_predict(name, hp, ds, cfg, seed)
-                # learning curve in scaled units; epoch_* so it can't clash with final metrics
-                for epoch, train_mse, val_rmse in curve:
-                    run.log({"epoch_train_mse": train_mse, "epoch_val_rmse": val_rmse}, step=epoch)
-                scores = {
-                    split: regression_metrics(ds.y_true[ds.part(split)], pred[ds.part(split)])
-                    for split in ("train", "val", "test")
-                }
-                run.summary.update(
-                    {f"{split}_{k}": v for split, m in scores.items() for k, v in m.items()} | info
-                )
-            preds.append(pred)
-            for split, m in scores.items():
-                rows.append(
-                    {"target": TARGET, "model": name, "seed": seed, "split": split, **m, **info}
-                )
-            print(
-                f"[eval] {TARGET:9s} {name:11s} seed={seed}  "
-                f"test RMSE={scores['test']['rmse']:.4g}  R2={scores['test']['r2']:.3f}"
-            )
 
-        # keep every prediction so the report can average seeds and run DM tests
-        np.savez(
-            cfg.run_dir / "preds" / f"{TARGET}__{name}.npz",
-            dates=ds.dates.strftime("%Y-%m-%d").to_numpy(str),
-            split=ds.split,
-            y_true=ds.y_true,
-            preds=np.array(preds),
-        )
+def evaluate(cfg: Config, df: pd.DataFrame) -> pd.DataFrame:
+    for d in ("preds", "metrics"):
+        (cfg.run_dir / d).mkdir(exist_ok=True)
+    ds = build_dataset(df, cfg)
+    return pd.concat([evaluate_model(cfg, ds, name) for name in cfg.models], ignore_index=True)
 
-    # merge: replace only the (target, model) pairs just run, keep the rest of metrics.csv
-    df = pd.DataFrame(rows)
-    path = cfg.run_dir / "metrics.csv"
-    if path.exists():
-        old = pd.read_csv(path)
-        rerun = old.set_index(["target", "model"]).index.isin(
-            df.set_index(["target", "model"]).index
-        )
-        df = pd.concat([old[~rerun], df], ignore_index=True)
-    df.to_csv(path, index=False)
-    return df
+
+def evaluate_model(cfg: Config, ds: Dataset, name: str) -> pd.DataFrame:
+    hp = load_hp(cfg, name)
+    seeds = (0,) if name in UNTRAINED_MODELS else cfg.seeds  # deterministic: one run
+    n_inputs = 1 if name == "persistence" else ds.n_features  # for the adjusted R2
+    preds, rows = [], []
+    for seed in seeds:
+        with wandb.init(
+            project=WANDB_PROJECT,
+            group=cfg.name,
+            job_type="evaluate",
+            name=f"{name}-s{seed}",
+            config={"model": name, "seed": seed, **hp},
+            mode=cfg.wandb_mode,
+            dir=cfg.run_dir,
+        ) as run:
+            pred, info, curve = train_and_predict(name, hp, ds, cfg, seed)
+            log_curve(run, curve)
+            scores = {
+                split: regression_metrics(ds.y_true[ds.part(split)], pred[ds.part(split)], n_inputs)
+                for split in SPLITS
+            }
+            flat = {
+                f"{split}_{metric}": v for split, m in scores.items() for metric, v in m.items()
+            }
+            run.summary.update(flat | info)
+        preds.append(pred)
+        rows += [{"model": name, "seed": seed, "split": s, **m, **info} for s, m in scores.items()]
+        test = scores["test"]
+        print(f"[eval] {name:11s} seed={seed}  test RMSE={test['rmse']:.4g}  R2={test['r2']:.3f}")
+
+    np.savez(
+        cfg.run_dir / "preds" / f"{name}.npz",
+        dates=ds.dates.strftime("%Y-%m-%d %H:%M").to_numpy(str),
+        split=ds.split,
+        y_true=ds.y_true,
+        preds=np.array(preds),  # (seeds, samples)
+    )
+    out = pd.DataFrame(rows)
+    out.to_csv(cfg.run_dir / "metrics" / f"{name}.csv", index=False)
+    return out
