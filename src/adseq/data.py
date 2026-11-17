@@ -93,19 +93,22 @@ class Dataset:
 
 
 def build_dataset(df: pd.DataFrame, cfg: Config) -> Dataset:
-    split = time_split(df.index, cfg.val_frac)
+    dates = pd.DatetimeIndex(df.index)
+    split = time_split(dates, cfg.val_frac)
     features = df.columns.drop(TARGET)
+    y_all = df[TARGET].to_numpy(float)
 
     # scalers fit on the training rows only
-    train = df[split == "train"]
-    lo, hi = train[features].min(), train[features].max()
-    y_offset, y_scale = float(train[TARGET].min()), float(train[TARGET].max() - train[TARGET].min())
+    train = df.loc[split == "train", features]
+    lo, hi = train.min(), train.max()
+    y_train = y_all[split == "train"]
+    y_offset, y_scale = float(y_train.min()), float(y_train.max() - y_train.min())
 
     # regular minute grid so "60 min earlier" is one fixed offset; their dropped minutes are
     # carried forward from the last row (past values only)
-    full = pd.date_range(df.index[0], df.index[-1], freq="min")
+    full = pd.date_range(dates[0], dates[-1], freq="min")
     grid = ((df[features] - lo) / (hi - lo).replace(0, 1)).reindex(full).ffill()
-    pos_all = full.get_indexer(df.index)
+    pos_all = full.get_indexer(dates)
 
     # samples: every row of the test set; a fixed random 1/stride of the train / val minutes
     # (so every minute of the hour is seen); all with MAX_WINDOW hours of history
@@ -115,15 +118,15 @@ def build_dataset(df: pd.DataFrame, cfg: Config) -> Dataset:
     if not keep[split == "test"].all():
         raise ValueError("a test row lacks a full window; lower MAX_WINDOW")
 
-    s = df[keep]
+    y_true = y_all[keep]
     return Dataset(
-        dates=pd.DatetimeIndex(s.index),
+        dates=dates[keep],
         split=split[keep],
         grid=grid.to_numpy(np.float32),
         pos=pos_all[keep],
-        y=((s[TARGET] - y_offset) / y_scale).to_numpy(np.float32),  # = Dataset.scale
-        y_true=s[TARGET].to_numpy(float),
-        y_prev=s[PERSISTENCE].to_numpy(float),
+        y=((y_true - y_offset) / y_scale).astype(np.float32),  # = Dataset.scale
+        y_true=y_true,
+        y_prev=df[PERSISTENCE].to_numpy(float)[keep],
         y_offset=y_offset,
         y_scale=y_scale,
         n_features=len(features),

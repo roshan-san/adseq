@@ -17,7 +17,7 @@ import wandb
 from .config import WANDB_PROJECT, Config
 from .data import WINDOWS, Dataset
 from .models import UNTRAINED_MODELS
-from .train import log_curve, train_and_predict
+from .train import fit_recurrent, log_curve
 
 
 def sweep_config(cfg: Config, name: str) -> dict:
@@ -80,7 +80,7 @@ def tune(cfg: Config, ds: Dataset, name: str) -> dict:
             dir=cfg.run_dir,
         ) as run:
             hp = dict(run.config)  # the sweep's parameters are exactly the model's hyper-parameters
-            _, info, curve = train_and_predict(name, hp, ds, cfg, seed=0, predict=False)
+            _, info, curve = fit_recurrent(name, hp, ds, cfg, seed=0)  # no test predictions
             log_curve(run, curve)
             run.summary["val_rmse"] = info["val_rmse_scaled"]  # best epoch, the sweep's metric
             run.summary.update({"epochs": info["epochs"], "n_params": info["n_params"]})

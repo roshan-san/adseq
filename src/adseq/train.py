@@ -13,21 +13,21 @@ from torch import nn
 
 from .config import Config
 from .data import Dataset
-from .models import RESIDUAL_MODELS, fit_ridge, make_model
+from .models import RESIDUAL_MODELS, RecurrentNet, fit_ridge, make_model
 
 Curve = list[tuple[int, float, float]]  # (epoch, mean train loss, val RMSE), scaled units
 
 
 def train_and_predict(
-    name: str, hp: dict, ds: Dataset, cfg: Config, seed: int, predict: bool = True
-) -> tuple[np.ndarray | None, dict, Curve]:
-    """Returns predictions (ft^3/min) for every sample, training info, and the learning curve.
-    predict=False (tuning) skips the prediction pass and returns None for it."""
+    name: str, hp: dict, ds: Dataset, cfg: Config, seed: int
+) -> tuple[np.ndarray, dict, Curve]:
+    """Returns predictions (ft^3/min) for every sample, training info, and the learning curve."""
     if name == "persistence":
         return ds.y_prev, {"epochs": 0, "n_params": 0}, []
     if name == "ridge":
         return predict_ridge(ds)
-    return train_recurrent(name, hp, ds, cfg, seed, predict)
+    model, info, curve = fit_recurrent(name, hp, ds, cfg, seed)
+    return predict_recurrent(model, name, hp, ds), info, curve
 
 
 def predict_ridge(ds: Dataset) -> tuple[np.ndarray, dict, Curve]:
@@ -39,14 +39,18 @@ def predict_ridge(ds: Dataset) -> tuple[np.ndarray, dict, Curve]:
     return ds.unscale(X @ w + b), info, []
 
 
-def train_recurrent(
-    name: str, hp: dict, ds: Dataset, cfg: Config, seed: int, predict: bool
-) -> tuple[np.ndarray | None, dict, Curve]:
-    train, val = ds.part("train"), ds.part("val")
+def base_level(name: str, ds: Dataset) -> np.ndarray:
+    """What the net's output is added to (scaled units): persistence for the residual models,
+    zero for the others."""
+    return ds.scale(ds.y_prev) if name in RESIDUAL_MODELS else np.zeros_like(ds.y)
 
-    # residual models learn the change from persistence, in the same scaled units
-    base = ds.scale(ds.y_prev) if name in RESIDUAL_MODELS else np.zeros_like(ds.y)
-    y = torch.from_numpy((ds.y - base).astype(np.float32))
+
+def fit_recurrent(
+    name: str, hp: dict, ds: Dataset, cfg: Config, seed: int
+) -> tuple[RecurrentNet, dict, Curve]:
+    """Train on the training samples; return the best-validation-epoch model."""
+    train, val = ds.part("train"), ds.part("val")
+    y = torch.from_numpy((ds.y - base_level(name, ds)).astype(np.float32))
 
     def inputs(idx: np.ndarray) -> torch.Tensor:
         return torch.from_numpy(ds.windows(idx, hp["window"]))  # window: hours, tuned
@@ -91,13 +95,18 @@ def train_recurrent(
         "val_rmse_scaled": best_rmse,
         "n_params": sum(p.numel() for p in model.parameters()),
     }
-    if not predict:
-        return None, info, curve
+    return model, info, curve
+
+
+def predict_recurrent(model: RecurrentNet, name: str, hp: dict, ds: Dataset) -> np.ndarray:
+    """Predictions (ft^3/min) for every sample."""
     model.eval()
     with torch.no_grad():  # in chunks: ~100k samples x window would not fit in memory at once
         chunks = np.array_split(np.arange(len(ds.y)), max(1, len(ds.y) // 4096))
-        out = np.concatenate([model(inputs(c)).numpy() for c in chunks])
-    return ds.unscale(out.astype(float) + base), info, curve
+        out = np.concatenate(
+            [model(torch.from_numpy(ds.windows(c, hp["window"]))).numpy() for c in chunks]
+        )
+    return ds.unscale(out.astype(float) + base_level(name, ds))
 
 
 def log_curve(run, curve: Curve) -> None:

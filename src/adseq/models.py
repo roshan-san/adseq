@@ -61,11 +61,11 @@ def fit_ridge(
     x_mean, y_mean = X.mean(0), y.mean()
     Xc = X - x_mean
     gram, xty = Xc.T @ Xc, Xc.T @ (y - y_mean)
-    best = None
-    for alpha in RIDGE_ALPHAS:
+
+    def fit(alpha: float) -> tuple[np.ndarray, float, float, float]:
         w = np.linalg.solve(gram + alpha * np.eye(len(gram)), xty)
         b = float(y_mean - x_mean @ w)
         rmse = float(np.sqrt(np.mean((X_val @ w + b - y_val) ** 2)))
-        if best is None or rmse < best[3]:
-            best = (w, b, float(alpha), rmse)
-    return best
+        return w, b, alpha, rmse
+
+    return min((fit(float(a)) for a in RIDGE_ALPHAS), key=lambda f: f[3])
