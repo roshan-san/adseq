@@ -5,7 +5,6 @@ description = "Residual recurrent networks (RNN/GRU/LSTM) for 24-h biogas foreca
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "torch>=2.5",
     "numpy>=1.26",
     "pandas>=2.2",
     "scipy>=1.13",
@@ -25,13 +24,31 @@ dev = ["ruff>=0.8", "pytest>=8.3"]
 requires = ["uv_build>=0.13.7,<0.14.0"]
 build-backend = "uv_build"
 
-# CPU-only PyTorch (no GPU on this machine; avoids ~3 GB of CUDA wheels)
+# PyTorch build, chosen per machine (the code is the same):
+#   uv sync --extra cpu     no NVIDIA GPU (small; no CUDA)
+#   uv sync --extra cu132   NVIDIA GPU (CUDA 13.2 build; nvidia-smi must show "CUDA Version" >= 13.2)
+# A plain `uv sync` without either removes torch.
+[project.optional-dependencies]
+cpu = ["torch>=2.5"]
+cu132 = ["torch>=2.5"]
+
+[tool.uv]
+conflicts = [[{ extra = "cpu" }, { extra = "cu132" }]]
+
 [tool.uv.sources]
-torch = [{ index = "pytorch-cpu" }]
+torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu132", extra = "cu132" },
+]
 
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu132"
+url = "https://download.pytorch.org/whl/cu132"
 explicit = true
 
 [tool.ruff]

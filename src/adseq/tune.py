@@ -99,7 +99,7 @@ def tune(cfg: Config, ds: Dataset, name: str) -> dict:
             info, curve = fit_tuned(name, hp, ds, cfg, seed=0)  # no test predictions
             log_curve(run, curve)
             run.summary["val_rmse"] = info["val_rmse_scaled"]  # best epoch, the sweep's metric
-            run.summary.update({"epochs": info["epochs"], "n_params": info["n_params"]})
+            run.summary.update({k: info[k] for k in ("epochs", "n_params", "device")})
 
     if cfg.n_trials > done:
         wandb.agent(

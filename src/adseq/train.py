@@ -4,6 +4,9 @@ Persistence and ridge have no training loop. Every recurrent model shares one pr
 Adam, MSE or L1 loss (a tuned choice), mini-batches, gradient clipping, early stopping on
 validation RMSE; the weights from the best validation epoch are kept. LightGBM is boosted with
 the same loss choice and early stopping on the same validation RMSE (one "epoch" = one tree).
+
+The recurrent models train on the GPU when there is one (install the CUDA build of PyTorch with
+`uv sync --extra cu132`), else on the CPU; the code is the same. LightGBM always uses the CPU.
 """
 
 import copy
@@ -25,6 +28,7 @@ from .models import (
     make_model,
 )
 
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # recurrent models
 Curve = list[tuple[int, float, float]]  # (epoch, mean train loss, val RMSE), scaled units
 
 
@@ -114,6 +118,7 @@ def fit_lgbm(name: str, hp: dict, ds: Dataset, seed: int) -> tuple[lgb.Booster, 
         "epochs": best,
         "val_rmse_scaled": val_rmse[best - 1],
         "n_params": sum(t["num_leaves"] for t in trees),  # one fitted value per leaf
+        "device": "cpu",
     }
     return booster, info, curve
 
@@ -137,19 +142,19 @@ def fit_recurrent(
     train, val = ds.part("train"), ds.part("val")
     y = torch.from_numpy((ds.y - base_level(name, ds)).astype(np.float32))
 
-    def inputs(idx: np.ndarray) -> torch.Tensor:
-        return torch.from_numpy(ds.windows(idx, hp["window"]))  # window: hours, tuned
+    def inputs(idx: np.ndarray) -> torch.Tensor:  # window: hours, tuned
+        return torch.from_numpy(ds.windows(idx, hp["window"])).to(DEVICE)
 
-    torch.manual_seed(seed)
-    model = make_model(name, hp, ds.n_features)
+    torch.manual_seed(seed)  # also seeds CUDA; the weights are initialised on the CPU either way
+    model = make_model(name, hp, ds.n_features).to(DEVICE)
     opt = torch.optim.Adam(model.parameters(), lr=hp["lr"], weight_decay=hp["weight_decay"])
     loss_fn = nn.L1Loss() if hp["loss"] == "l1" else nn.MSELoss()
-    X_val = inputs(val)
+    X_val, y_val = inputs(val), y[val].to(DEVICE)
 
     def val_rmse() -> float:
         model.eval()
         with torch.no_grad():
-            return (model(X_val) - y[val]).pow(2).mean().sqrt().item()
+            return (model(X_val) - y_val).pow(2).mean().sqrt().item()
 
     # epoch 0 = untrained weights, so there is always a state to restore
     best_rmse, best_state, best_epoch = val_rmse(), copy.deepcopy(model.state_dict()), 0
@@ -160,7 +165,7 @@ def fit_recurrent(
         loss_sum = 0.0
         for i in range(0, len(order), hp["batch_size"]):
             batch = order[i : i + hp["batch_size"]]
-            loss = loss_fn(model(inputs(batch)), y[batch])
+            loss = loss_fn(model(inputs(batch)), y[batch].to(DEVICE))
             opt.zero_grad()
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -179,6 +184,7 @@ def fit_recurrent(
         "epochs": best_epoch,
         "val_rmse_scaled": best_rmse,
         "n_params": sum(p.numel() for p in model.parameters()),
+        "device": DEVICE.type,
     }
     return model, info, curve
 
@@ -189,7 +195,10 @@ def predict_recurrent(model: RecurrentNet, name: str, hp: dict, ds: Dataset) -> 
     with torch.no_grad():  # in chunks: ~100k samples x window would not fit in memory at once
         chunks = np.array_split(np.arange(len(ds.y)), max(1, len(ds.y) // 4096))
         out = np.concatenate(
-            [model(torch.from_numpy(ds.windows(c, hp["window"]))).numpy() for c in chunks]
+            [
+                model(torch.from_numpy(ds.windows(c, hp["window"])).to(DEVICE)).cpu().numpy()
+                for c in chunks
+            ]
         )
     return ds.unscale(out.astype(float) + base_level(name, ds))
 
