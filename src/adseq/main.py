@@ -12,7 +12,7 @@ import tyro
 from .config import Config
 from .data import build_dataset, load_processed
 from .evaluate import evaluate
-from .models import RECURRENT_MODELS
+from .models import TUNED_MODELS
 from .report import make_report
 from .tune import tune
 
@@ -47,9 +47,9 @@ def fetch_cmd(cfg: Cfg) -> None:
 
 def tune_cmd(cfg: Cfg) -> None:
     """W&B Sweeps search for every tuned model (same run budget for all)."""
-    ds = build_dataset(load_processed(), cfg)  # built once, shared by every recurrent model
+    ds = build_dataset(load_processed(), cfg)  # built once, shared by every tuned model
     for name in cfg.models:
-        if name in RECURRENT_MODELS:
+        if name in TUNED_MODELS:
             tune(cfg, ds, name)
 
 

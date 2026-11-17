@@ -16,22 +16,38 @@ import wandb
 
 from .config import WANDB_PROJECT, Config
 from .data import WINDOWS, Dataset
-from .models import UNTRAINED_MODELS
-from .train import fit_recurrent, log_curve
+from .models import TREE_MODELS, UNTRAINED_MODELS
+from .train import fit_tuned, log_curve
+
+LGBM_SPACE = {
+    "lr": {"distribution": "log_uniform_values", "min": 5e-3, "max": 0.2},
+    "num_leaves": {"values": [7, 15, 31, 63, 127]},
+    "min_data_in_leaf": {"values": [5, 10, 20, 50, 100]},
+    "feature_fraction": {"distribution": "uniform", "min": 0.1, "max": 1.0},
+    "bagging_fraction": {"distribution": "uniform", "min": 0.5, "max": 1.0},
+    "lambda_l2": {"distribution": "log_uniform_values", "min": 1e-8, "max": 10.0},
+    "loss": {"values": ["mse", "l1"]},
+    "window": {"values": list(WINDOWS)},
+}
 
 
 def sweep_config(cfg: Config, name: str) -> dict:
-    """Search space: the same ranges for every recurrent model."""
-    params = {
-        "lr": {"distribution": "log_uniform_values", "min": 1e-4, "max": 1e-2},
-        "weight_decay": {"distribution": "log_uniform_values", "min": 1e-7, "max": 1e-2},
-        "batch_size": {"values": [64, 128, 256]},
-        "dropout": {"distribution": "uniform", "min": 0.0, "max": 0.4},
-        "loss": {"values": ["mse", "l1"]},
-        "hidden_size": {"values": [16, 32, 64, 128]},
-        "num_layers": {"distribution": "int_uniform", "min": 1, "max": 2},
-        "window": {"values": list(WINDOWS)},
-    }
+    """Search space: the same ranges for every recurrent model; LightGBM's own for the trees
+    (same loss and window choices)."""
+    params = (
+        LGBM_SPACE
+        if name in TREE_MODELS
+        else {
+            "lr": {"distribution": "log_uniform_values", "min": 1e-4, "max": 1e-2},
+            "weight_decay": {"distribution": "log_uniform_values", "min": 1e-7, "max": 1e-2},
+            "batch_size": {"values": [64, 128, 256]},
+            "dropout": {"distribution": "uniform", "min": 0.0, "max": 0.4},
+            "loss": {"values": ["mse", "l1"]},
+            "hidden_size": {"values": [16, 32, 64, 128]},
+            "num_layers": {"distribution": "int_uniform", "min": 1, "max": 2},
+            "window": {"values": list(WINDOWS)},
+        }
+    )
     return {
         "name": f"{cfg.name}/{name}",
         "method": "bayes",
@@ -80,7 +96,7 @@ def tune(cfg: Config, ds: Dataset, name: str) -> dict:
             dir=cfg.run_dir,
         ) as run:
             hp = dict(run.config)  # the sweep's parameters are exactly the model's hyper-parameters
-            _, info, curve = fit_recurrent(name, hp, ds, cfg, seed=0)  # no test predictions
+            info, curve = fit_tuned(name, hp, ds, cfg, seed=0)  # no test predictions
             log_curve(run, curve)
             run.summary["val_rmse"] = info["val_rmse_scaled"]  # best epoch, the sweep's metric
             run.summary.update({"epochs": info["epochs"], "n_params": info["n_params"]})

@@ -66,9 +66,11 @@ def test_scaling_is_fit_on_the_training_rows_only(df, ds):
 
 HP = {"lr": 1e-3, "weight_decay": 0.0, "batch_size": 256, "dropout": 0.0, "loss": "l1"}
 HP |= {"hidden_size": 8, "num_layers": 1, "window": 12}
+HP |= {"num_leaves": 15, "min_data_in_leaf": 20, "feature_fraction": 0.5}
+HP |= {"bagging_fraction": 0.8, "lambda_l2": 1e-3}
 
 
-@pytest.mark.parametrize("name", ["ridge", "gru_res"])
+@pytest.mark.parametrize("name", ["ridge", "gru_res", "lgbm", "lgbm_res"])
 def test_models_train_and_predict(ds, name):
     pred, _, _ = train_and_predict(name, HP, ds, replace(CFG, max_epochs=1, patience=1), seed=0)
     assert pred.shape == ds.y_true.shape and np.isfinite(pred).all()
@@ -88,3 +90,13 @@ def test_scale_and_unscale_are_inverses(ds):
 def test_windows_never_exceed_the_history_every_sample_has(ds):
     with pytest.raises(ValueError):
         ds.windows(ds.part("train")[:1], MAX_WINDOW + 1)
+
+
+def test_lgbm_is_seeded_and_beats_persistence_on_val(ds):
+    hp = HP | {"lr": 0.05, "loss": "mse"}
+    a, info, _ = train_and_predict("lgbm_res", hp, ds, CFG, seed=0)
+    b, _, _ = train_and_predict("lgbm_res", hp, ds, CFG, seed=0)
+    assert np.array_equal(a, b) and info["epochs"] > 0
+    va = ds.part("val")
+    rmse = regression_metrics(ds.y_true[va], a[va])["rmse"]
+    assert rmse < regression_metrics(ds.y_true[va], ds.y_prev[va])["rmse"]

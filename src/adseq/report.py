@@ -18,6 +18,8 @@ NAMES = {
     "sj_mlp": "MLP, Schroer & Just (their code)",
     "persistence": "Persistence",
     "ridge": "Ridge",
+    "lgbm": "LightGBM",
+    "lgbm_res": "Res-LightGBM",
     "rnn": "RNN",
     "gru": "GRU",
     "lstm": "LSTM",
@@ -25,7 +27,16 @@ NAMES = {
     "gru_res": "Res-GRU (proposed)",
     "lstm_res": "Res-LSTM (proposed)",
 }
-BASELINES = ("sj_mlp", "persistence", "ridge", "rnn", "gru", "lstm")  # DM tests against these
+BASELINES = (
+    "sj_mlp",
+    "persistence",
+    "ridge",
+    "lgbm",
+    "lgbm_res",
+    "rnn",
+    "gru",
+    "lstm",
+)  # DM tests against these
 SJ_PREDS = Path("runs/schroer_repro/schroer_mlp_test.csv")  # from scripts/run_schroer.py
 SJ_INPUTS = 36  # inputs of their MLP, for its adjusted R2
 

@@ -2,6 +2,10 @@
 
 persistence   next-24-h mean = mean of the previous clock hour (Schroer & Just's baseline)
 ridge         linear model on the minute-t features, penalty chosen on validation
+lgbm          LightGBM on the same window the recurrent models see, flattened (one column per
+              feature and hour)
+lgbm_res      LightGBM predicting the change from persistence, like the *_res nets (ablation:
+              is the gain the residual target or the recurrent encoder?)
 (Schroer & Just's own MLP is run from their notebooks: scripts/run_schroer.py)
 rnn/gru/lstm  recurrent encoder over the last L hours -> last hidden state -> linear
 *_res         proposed: the same recurrent encoder predicts the *change* from the last hour's
@@ -14,7 +18,11 @@ from torch import nn
 
 RESIDUAL_MODELS = ("rnn_res", "gru_res", "lstm_res")  # proposed
 RECURRENT_MODELS = ("rnn", "gru", "lstm", *RESIDUAL_MODELS)
+TREE_MODELS = ("lgbm", "lgbm_res")
+TUNED_MODELS = (*RECURRENT_MODELS, *TREE_MODELS)  # W&B sweep each
 UNTRAINED_MODELS = ("persistence", "ridge")  # deterministic: one run, no sweep
+LGBM_MAX_ROUNDS = 5000
+LGBM_PATIENCE = 100  # boosting rounds without a better val RMSE
 RIDGE_ALPHAS = np.logspace(-4, 3, 50)
 CELLS = {"rnn": nn.RNN, "gru": nn.GRU, "lstm": nn.LSTM}
 
@@ -49,6 +57,11 @@ def make_model(name: str, hp: dict, n_features: int) -> RecurrentNet:
         nn.init.zeros_(model.head.weight)
         nn.init.zeros_(model.head.bias)
     return model
+
+
+def is_residual(name: str) -> bool:
+    """Predicts the change from persistence (recurrent or tree)."""
+    return name.endswith("_res")
 
 
 def fit_ridge(

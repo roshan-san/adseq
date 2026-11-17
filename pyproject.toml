@@ -12,6 +12,7 @@ dependencies = [
     "tyro>=0.9",
     "matplotlib>=3.9",
     "wandb>=0.31.0",
+    "lightgbm>=4.7.0",
 ]
 
 [project.scripts]

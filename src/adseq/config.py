@@ -9,6 +9,8 @@ WANDB_PROJECT = "adseq"
 ModelName = Literal[
     "persistence",
     "ridge",
+    "lgbm",
+    "lgbm_res",
     "rnn",
     "gru",
     "lstm",
