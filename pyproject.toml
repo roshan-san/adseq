@@ -1,7 +1,7 @@
 [project]
 name = "adseq"
 version = "0.1.0"
-description = "Recurrent (RNN/GRU/LSTM) vs lag-feature FNN forecasting of full-scale anaerobic digester performance"
+description = "Residual recurrent networks (RNN/GRU/LSTM) for 24-h biogas forecasting from full-scale co-digestion SCADA data"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [

@@ -9,11 +9,9 @@ runs/
 
 # W&B local files (the runs are already stored online in W&B)
 wandb/
-demo/
 
 # downloaded data: `uv run adseq fetch`
-data/raw/
+data/
 
-# third-party papers (copyrighted) and generated figures
-
-data/synthetic/
+# Schroer & Just (2024) code + data (MIT), from doi:10.5281/zenodo.8360096 -- reference only
+reference/

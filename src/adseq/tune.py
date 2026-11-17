@@ -1,7 +1,7 @@
-"""Paper Sec. IV-C: equal-budget hyper-parameter search with W&B Sweeps (Bayesian optimisation).
+"""Equal-budget hyper-parameter search with W&B Sweeps (Bayesian optimisation).
 
 Every tuned model gets the same number of sweep runs (--n-trials), each trained with seed 0 and
-scored on the same validation days. Every trial is a W&B run (job_type "tune"), so the whole
+scored on the same validation samples. Every trial is a W&B run (job_type "tune"), so the whole
 search can be inspected online. The sweep id is saved in runs/<name>/sweeps/, so re-running
 continues the same sweep instead of starting a new one. Sweeps need --wandb-mode online.
 
@@ -15,27 +15,25 @@ from pathlib import Path
 import wandb
 
 from .config import WANDB_PROJECT, Config
-from .data import TARGET, Dataset
-from .models import PAPER_HP, RECURRENT_MODELS
-from .train import train_and_predict
+from .data import WINDOWS, Dataset
+from .models import UNTRAINED_MODELS
+from .train import fit_recurrent, log_curve
 
 
 def sweep_config(cfg: Config, name: str) -> dict:
-    """Search space (paper Table: hyper-parameter ranges). Same shared ranges for every model."""
+    """Search space: the same ranges for every recurrent model."""
     params = {
         "lr": {"distribution": "log_uniform_values", "min": 1e-4, "max": 1e-2},
         "weight_decay": {"distribution": "log_uniform_values", "min": 1e-7, "max": 1e-2},
-        "batch_size": {"values": [16, 32, 64, 128]},
+        "batch_size": {"values": [64, 128, 256]},
         "dropout": {"distribution": "uniform", "min": 0.0, "max": 0.4},
+        "loss": {"values": ["mse", "l1"]},
+        "hidden_size": {"values": [16, 32, 64, 128]},
+        "num_layers": {"distribution": "int_uniform", "min": 1, "max": 2},
+        "window": {"values": list(WINDOWS)},
     }
-    if name in RECURRENT_MODELS:
-        params["hidden_size"] = {"values": [16, 32, 64, 128]}
-        params["num_layers"] = {"distribution": "int_uniform", "min": 1, "max": 2}
-    else:  # fnn_tuned, window_fnn
-        params["n_layers"] = {"distribution": "int_uniform", "min": 1, "max": 3}
-        params["width"] = {"values": [32, 64, 128, 256]}
     return {
-        "name": f"{cfg.name}/{TARGET}/{name}",
+        "name": f"{cfg.name}/{name}",
         "method": "bayes",
         "metric": {"name": "val_rmse", "goal": "minimize"},
         "parameters": params,
@@ -43,15 +41,13 @@ def sweep_config(cfg: Config, name: str) -> dict:
 
 
 def hp_file(cfg: Config, name: str) -> Path:
-    return cfg.run_dir / "best_hp" / f"{TARGET}__{name}.json"
+    return cfg.run_dir / "best_hp" / f"{name}.json"
 
 
 def load_hp(cfg: Config, name: str) -> dict:
-    """Best sweep run for tuned models; fnn_paper uses the base paper's fixed HP."""
-    if name == "persistence":
+    """Best sweep run's hyper-parameters ({} for the untrained baselines)."""
+    if name in UNTRAINED_MODELS:
         return {}
-    if name == "fnn_paper":
-        return dict(PAPER_HP)
     path = hp_file(cfg, name)
     if not path.exists():
         raise FileNotFoundError(f"{path} missing: run `adseq tune --name {cfg.name}` first")
@@ -64,7 +60,7 @@ def tune(cfg: Config, ds: Dataset, name: str) -> dict:
     api = wandb.Api()
 
     # one sweep per model; its id is saved so a re-run continues it
-    id_file = cfg.run_dir / "sweeps" / f"{TARGET}__{name}.txt"
+    id_file = cfg.run_dir / "sweeps" / f"{name}.txt"
     if id_file.exists():
         sweep_path = id_file.read_text().strip()
     else:
@@ -80,13 +76,12 @@ def tune(cfg: Config, ds: Dataset, name: str) -> dict:
         with wandb.init(
             group=f"{cfg.name}-tune",
             job_type="tune",
-            tags=[TARGET, name],
+            tags=[name],
             dir=cfg.run_dir,
         ) as run:
             hp = dict(run.config)  # the sweep's parameters are exactly the model's hyper-parameters
-            _, info, curve = train_and_predict(name, hp, ds, cfg, seed=0)
-            for epoch, train_mse, val_rmse in curve:
-                run.log({"epoch_train_mse": train_mse, "epoch_val_rmse": val_rmse}, step=epoch)
+            _, info, curve = fit_recurrent(name, hp, ds, cfg, seed=0)  # no test predictions
+            log_curve(run, curve)
             run.summary["val_rmse"] = info["val_rmse_scaled"]  # best epoch, the sweep's metric
             run.summary.update({"epochs": info["epochs"], "n_params": info["n_params"]})
 
@@ -101,13 +96,14 @@ def tune(cfg: Config, ds: Dataset, name: str) -> dict:
 
     sweep = wandb.Api().sweep(sweep_path)  # fresh Api: no cached run list
     best_run = sweep.best_run()
+    # wandb.agent swallows trial exceptions, so check that at least one trial finished
+    if best_run is None or "val_rmse" not in best_run.summary:
+        raise SystemExit(f"[tune] {name}: no trial finished; see the failed runs at {sweep.url}")
     best = dict(best_run.config)
     path = hp_file(cfg, name)
     path.parent.mkdir(exist_ok=True)
     path.write_text(json.dumps(best, indent=2))
     val = best_run.summary["val_rmse"]
-    print(
-        f"[tune] {TARGET} {name}: best val RMSE = {val * ds.y_scale:.2f} (scaled {val:.4f})  {best}"
-    )
+    print(f"[tune] {name}: best val RMSE = {val * ds.y_scale:.2f} (scaled {val:.4f})  {best}")
     print(f"       sweep: {sweep.url}")
     return best

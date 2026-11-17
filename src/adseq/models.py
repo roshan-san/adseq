@@ -1,53 +1,35 @@
-"""Paper Sec. IV-B: models.
+"""Models.
 
-fnn_paper   base paper's network, fixed: 128-64-1 ReLU, Adam lr=1e-3, min-max inputs (Long et al., 2026)
-fnn_tuned   same idea, hyper-parameters tuned with the same budget as the RNNs
-window_fnn  FNN on the flattened L-day window (ablation: same inputs as RNNs, no recurrence)
-rnn/gru/lstm  recurrent encoder over the L-day window -> last hidden state -> linear
+persistence   next-24-h mean = mean of the previous clock hour (Schroer & Just's baseline)
+ridge         linear model on the minute-t features, penalty chosen on validation
+(Schroer & Just's own MLP is run from their notebooks: scripts/run_schroer.py)
+rnn/gru/lstm  recurrent encoder over the last L hours -> last hidden state -> linear
+*_res         proposed: the same recurrent encoder predicts the *change* from the last hour's
+              biogas and adds it to persistence, so it only has to learn a correction
 """
 
+import numpy as np
 import torch
 from torch import nn
 
-PAPER_HP = {
-    "width": 128,  # 128-64-1
-    "n_layers": 2,
-    "dropout": 0.0,
-    "lr": 1e-3,
-    "weight_decay": 0.0,
-    "batch_size": 32,
-}
-RECURRENT_MODELS = ("rnn", "gru", "lstm")
-WINDOW_MODELS = ("window_fnn", *RECURRENT_MODELS)  # use the (N, L, F) input
-TUNED_MODELS = ("fnn_tuned", *WINDOW_MODELS)  # searched with W&B Sweeps
-
-
-class FNN(nn.Module):
-    """n_layers hidden layers, each half as wide as the one before: width=128, n_layers=2 -> 128-64."""
-
-    def __init__(self, n_in: int, width: int, n_layers: int, dropout: float = 0.0):
-        super().__init__()
-        layers = []
-        for h in (width // 2**i for i in range(n_layers)):
-            layers += [nn.Linear(n_in, h), nn.ReLU(), nn.Dropout(dropout)]
-            n_in = h
-        layers.append(nn.Linear(n_in, 1))
-        self.net = nn.Sequential(*layers)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x.flatten(1)).squeeze(-1)  # flatten(1) handles window inputs
+RESIDUAL_MODELS = ("rnn_res", "gru_res", "lstm_res")  # proposed
+RECURRENT_MODELS = ("rnn", "gru", "lstm", *RESIDUAL_MODELS)
+UNTRAINED_MODELS = ("persistence", "ridge")  # deterministic: one run, no sweep
+RIDGE_ALPHAS = np.logspace(-4, 3, 50)
+CELLS = {"rnn": nn.RNN, "gru": nn.GRU, "lstm": nn.LSTM}
 
 
 class RecurrentNet(nn.Module):
+    """Recurrent encoder over a (batch, L, F) window -> last hidden state -> one number."""
+
     def __init__(self, cell: str, n_in: int, hidden_size: int, num_layers: int, dropout: float):
         super().__init__()
-        rnn_class = {"rnn": nn.RNN, "gru": nn.GRU, "lstm": nn.LSTM}[cell]
-        self.rnn = rnn_class(
+        self.rnn = CELLS[cell](
             n_in,
             hidden_size,
             num_layers,
             batch_first=True,
-            dropout=dropout if num_layers > 1 else 0.0,
+            dropout=dropout if num_layers > 1 else 0.0,  # torch only drops between layers
         )
         self.dropout = nn.Dropout(dropout)
         self.head = nn.Linear(hidden_size, 1)
@@ -57,8 +39,33 @@ class RecurrentNet(nn.Module):
         return self.head(self.dropout(out[:, -1])).squeeze(-1)
 
 
-def make_model(name: str, hp: dict, n_features: int, window: int) -> nn.Module:
-    if name in RECURRENT_MODELS:
-        return RecurrentNet(name, n_features, hp["hidden_size"], hp["num_layers"], hp["dropout"])
-    n_in = n_features * window if name == "window_fnn" else n_features
-    return FNN(n_in, hp["width"], hp["n_layers"], hp["dropout"])
+def make_model(name: str, hp: dict, n_features: int) -> RecurrentNet:
+    """Net for a model name ("gru" and "gru_res" are both GRUs). A residual model's output layer starts at zero, so the
+    untrained model predicts exactly persistence and training only learns the correction."""
+    model = RecurrentNet(
+        name.removesuffix("_res"), n_features, hp["hidden_size"], hp["num_layers"], hp["dropout"]
+    )
+    if name in RESIDUAL_MODELS:
+        nn.init.zeros_(model.head.weight)
+        nn.init.zeros_(model.head.bias)
+    return model
+
+
+def fit_ridge(
+    X: np.ndarray, y: np.ndarray, X_val: np.ndarray, y_val: np.ndarray
+) -> tuple[np.ndarray, float, float, float]:
+    """Closed-form ridge with an unpenalised intercept, in float64 (the lag features are
+    collinear); the penalty with the lowest validation RMSE wins.
+    Returns (weights, bias, alpha, val RMSE)."""
+    X, y, X_val, y_val = (np.asarray(a, float) for a in (X, y, X_val, y_val))
+    x_mean, y_mean = X.mean(0), y.mean()
+    Xc = X - x_mean
+    gram, xty = Xc.T @ Xc, Xc.T @ (y - y_mean)
+
+    def fit(alpha: float) -> tuple[np.ndarray, float, float, float]:
+        w = np.linalg.solve(gram + alpha * np.eye(len(gram)), xty)
+        b = float(y_mean - x_mean @ w)
+        rmse = float(np.sqrt(np.mean((X_val @ w + b - y_val) ** 2)))
+        return w, b, alpha, rmse
+
+    return min((fit(float(a)) for a in RIDGE_ALPHAS), key=lambda f: f[3])

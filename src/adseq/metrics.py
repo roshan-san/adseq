@@ -1,19 +1,27 @@
-"""Point metrics (base paper: RMSE, R2, +/-10% accuracy) and forecast-comparison tests."""
+"""Point metrics (Schroer & Just 2024: adjusted R2, MAPE, RMSE, TeEI) and the DM test."""
 
 import numpy as np
 from scipy import stats
 
 
-def regression_metrics(y: np.ndarray, p: np.ndarray) -> dict[str, float]:
+def regression_metrics(y: np.ndarray, p: np.ndarray, k: int = 1) -> dict[str, float]:
+    """k = number of input features per sample, for the adjusted R2."""
     y, p = np.asarray(y, float), np.asarray(p, float)
     e = p - y
+    n = len(y)
     ss_res = float(np.sum(e**2))
     ss_tot = float(np.sum((y - y.mean()) ** 2))
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
+    rmse, mape = float(np.sqrt(np.mean(e**2))), float(np.mean(np.abs(e) / np.abs(y)))
+    adj_r2 = 1 - (1 - r2) * (n - 1) / (n - k - 1) if n > k + 1 else float("nan")
     return {
-        "rmse": float(np.sqrt(np.mean(e**2))),
+        "rmse": rmse,
         "mae": float(np.mean(np.abs(e))),
-        "r2": 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan"),
-        "acc10": float(np.mean(np.abs(e) <= 0.10 * np.abs(y))),  # paper's +/-10% accuracy
+        "mape": 100 * mape,  # %
+        "r2": r2,
+        "adj_r2": adj_r2,
+        # Schroer & Just's testing error index: MAPE^2 x RMSE / adj R2 (MAPE as a fraction)
+        "teei": mape**2 * rmse / adj_r2 if adj_r2 > 0 else float("nan"),
     }
 
 
@@ -22,9 +30,10 @@ def diebold_mariano(
 ) -> tuple[float, float, float]:
     """DM test on squared errors with a Newey-West (HAC, Bartlett) long-run variance.
 
-    Daily loss differentials are autocorrelated (lag-1 ACF ~0.4 on Muscatine), so the plain
-    h = 1 variance would understate the uncertainty and give too-small p-values.
-    max_lag defaults to the Newey-West (1994) rule floor(4 (n/100)^(2/9)) (= 5 for n = 365).
+    Minute-by-minute forecasts of overlapping 24-h means have strongly autocorrelated loss differentials,
+    so the plain variance would understate the uncertainty and give too-small p-values.
+    max_lag defaults to the Newey-West (1994) rule floor(4 (n/100)^(2/9)); for h-step-ahead
+    forecasts pass at least h - 1 (the report uses the 1440-min horizon).
     H0: equal accuracy. Negative statistic => model 1 has *lower* loss than model 2.
     Returns (statistic, two-sided p, one-sided p for "model 1 better"), t(n-1) reference.
     """

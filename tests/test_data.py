@@ -1,57 +1,90 @@
-"""Leakage checks on the real Muscatine data (cite these in the paper's protocol section)."""
+"""Checks on Schroer & Just's processed data set and our splits / windows on top of it."""
 
-from pathlib import Path
+from dataclasses import replace
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from adseq.config import Config
-from adseq.data import build_dataset, clean_data, make_features
+from adseq.data import (
+    HORIZON,
+    MAX_WINDOW,
+    PROCESSED,
+    STEP,
+    TARGET,
+    build_dataset,
+    load_processed,
+    time_split,
+)
+from adseq.metrics import regression_metrics
+from adseq.train import train_and_predict
 
 CFG = Config()
-if not Path(CFG.data_path).exists():
-    pytest.skip("run `uv run adseq fetch` first", allow_module_level=True)
+if not PROCESSED.exists():
+    pytest.skip("run `adseq fetch` and scripts/run_schroer.py first", allow_module_level=True)
 
 
 @pytest.fixture(scope="module")
-def daily():
-    return clean_data(CFG.data_path)
+def df():
+    return load_processed()
 
 
-def test_features_do_not_use_the_future(daily):
-    day = daily.index[700]
-    before = make_features(daily).loc[day]
-    changed = daily.copy()
-    changed.loc[day:, "Biogas"] *= 10  # tamper with day t and later
-    after = make_features(changed).loc[day]
-    assert before.equals(after)
+@pytest.fixture(scope="module")
+def ds(df):
+    return build_dataset(df, CFG)
 
 
-def test_split_is_chronological_and_test_is_held_out(daily):
-    ds = build_dataset(daily, CFG)
+def test_processed_data_matches_the_paper(df, ds):
+    assert len(df) == 491_761 and df.shape[1] - 1 == 36  # their n and feature count
+    te = ds.part("test")
+    assert len(te) == 98_353  # every row of their test set is scored
+    m = regression_metrics(ds.y_true[te], ds.y_prev[te])
+    assert round(m["mape"], 1) == 17.9 and round(m["teei"], 2) == 1.45  # their persistence
+
+
+def test_split_is_chronological_with_gaps(ds):
     tr, va, te = (ds.dates[ds.part(p)] for p in ("train", "val", "test"))
-    assert tr.max() < va.min() and va.max() < te.min()
-    assert te.min() >= np.datetime64(CFG.test_start)
-    assert not np.isnan(ds.X_seq).any()
+    gap = pd.Timedelta(minutes=HORIZON)
+    assert tr.max() + gap <= va.min() and va.max() + gap <= te.min()  # labels never overlap
 
 
-def test_every_target_day_has_a_full_window(daily):
-    ds = build_dataset(daily, CFG)
-    assert ds.X_seq.shape[1] == CFG.window
-    assert (ds.X_seq[:, -1, :] == ds.X).all()  # last step of the window is day t
+def test_windows_look_back_in_hourly_steps(ds):
+    idx = ds.part("test")[:5]
+    w = ds.windows(idx, 24)
+    assert w.shape == (5, 24, ds.n_features) and not np.isnan(w).any()
+    assert (w[:, -1] == ds.X[idx]).all()  # last step is minute t itself
+    assert (w[:, -2] == ds.grid[ds.pos[idx] - STEP]).all()  # one step = 60 min earlier
 
 
-def test_scaling_is_fit_on_the_training_period_only(daily):
-    ds = build_dataset(daily, CFG)
-    tr = ds.part("train")
-    assert ds.y[tr].min() == 0 and abs(ds.y[tr].max() - 1) < 1e-6
+def test_scaling_is_fit_on_the_training_rows_only(df, ds):
+    train_rows = df[TARGET][time_split(df.index, CFG.val_frac) == "train"]
+    assert ds.y_offset == train_rows.min()
+    assert np.isclose(ds.y_scale, train_rows.max() - train_rows.min())
     assert np.allclose(ds.unscale(ds.y), ds.y_true, atol=1e-3)
 
 
-def test_implausible_digester_temperatures_are_removed(daily):
-    assert daily["Dig2-T_degF"].max() <= 105
-    # the 121.5 / 126.1 F readings are dropped, then filled with the last good value (04-09)
-    assert (
-        daily.loc["2022-04-10":"2022-04-11", "Dig2-T_degF"]
-        == daily.loc["2022-04-09", "Dig2-T_degF"]
-    ).all()
+HP = {"lr": 1e-3, "weight_decay": 0.0, "batch_size": 256, "dropout": 0.0, "loss": "l1"}
+HP |= {"hidden_size": 8, "num_layers": 1, "window": 12}
+
+
+@pytest.mark.parametrize("name", ["ridge", "gru_res"])
+def test_models_train_and_predict(ds, name):
+    pred, _, _ = train_and_predict(name, HP, ds, replace(CFG, max_epochs=1, patience=1), seed=0)
+    assert pred.shape == ds.y_true.shape and np.isfinite(pred).all()
+
+
+def test_untrained_residual_net_is_persistence(ds):
+    pred, info, _ = train_and_predict("gru_res", HP, ds, replace(CFG, max_epochs=0), seed=0)
+    assert info["epochs"] == 0
+    assert np.allclose(pred, ds.y_prev)
+
+
+def test_scale_and_unscale_are_inverses(ds):
+    assert np.allclose(ds.unscale(ds.scale(ds.y_true)), ds.y_true)
+    assert np.allclose(ds.scale(ds.y_true), ds.y, atol=1e-6)
+
+
+def test_windows_never_exceed_the_history_every_sample_has(ds):
+    with pytest.raises(ValueError):
+        ds.windows(ds.part("train")[:1], MAX_WINDOW + 1)
