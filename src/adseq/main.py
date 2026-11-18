@@ -10,7 +10,7 @@ from typing import Annotated
 import tyro
 
 from .config import Config
-from .data import build_dataset, load_processed
+from .data import PROCESSED, build_dataset, load_processed
 from .evaluate import evaluate
 from .models import TUNED_MODELS
 from .report import make_report
@@ -28,14 +28,16 @@ SCADA_URL = "https://iro.uiowa.edu/view/fileRedirect?instCode=01IOWA_INST&filePi
 
 def fetch_cmd(cfg: Cfg) -> None:
     """Download SCADA-raw.csv (85 MB) and Schroer & Just's code, skipping whatever is already
-    there (their folder also holds the slow-to-rebuild SCADA-FINAL.csv); then run
-    scripts/run_schroer.py."""
-    if not cfg.data_path.exists():
+    there; then run scripts/run_schroer.py. The raw file is only needed to build
+    data/processed/SCADA-FINAL.csv, so it is skipped when that already exists."""
+    if PROCESSED.exists():
+        print(f"have {PROCESSED}; raw download not needed")
+    elif not cfg.data_path.exists():
         cfg.data_path.parent.mkdir(parents=True, exist_ok=True)
         part = cfg.data_path.with_suffix(".part")  # renamed only once complete
         urllib.request.urlretrieve(SCADA_URL, part)
         part.rename(cfg.data_path)
-    print(f"have {cfg.data_path}")
+        print(f"have {cfg.data_path}")
     dest = Path("reference/schroer2024")
     if not dest.exists():
         with urllib.request.urlopen(CODE_URL) as r, zipfile.ZipFile(io.BytesIO(r.read())) as z:

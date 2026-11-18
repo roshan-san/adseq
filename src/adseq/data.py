@@ -2,7 +2,7 @@
 
 Step 1, theirs: scripts/run_schroer.py runs their notebooks unmodified (doi:10.5281/zenodo.8360096)
 on SCADA-raw.csv (Muscatine, IA WRRF, doi:10.25820/data.006715) ->
-reference/schroer2024/SCADA/SCADA-FINAL.csv: 491,761 minute rows, target "Forecast" = mean biogas
+data/processed/SCADA-FINAL.csv: 491,761 minute rows, target "Forecast" = mean biogas
 flow over the next 24 h (ft^3/min). We use the 36 inputs of their final MLP.
 
 Step 2, ours:
@@ -29,7 +29,7 @@ HORIZON = 1440  # minutes ahead the target reaches
 STEP = 60  # minutes between window steps
 WINDOWS = (12, 24, 48, 72)  # hours of history a recurrent model may be tuned to
 MAX_WINDOW = max(WINDOWS)  # every sample has this much history, so any tuned window fits
-PROCESSED = Path("reference/schroer2024/SCADA/SCADA-FINAL.csv")  # their notebook's output
+PROCESSED = Path("data/processed/SCADA-FINAL.csv")  # their pretreatment notebook's output
 MLP_DROPS = ["day_sin", "day_cos", "D2_TEMPERATURE", "Q-influent_MGD"]  # their SCADA-MLP, cell 0
 
 

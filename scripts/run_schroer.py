@@ -2,8 +2,9 @@
 set and reproduce their final MLP. Their code: reference/schroer2024 (doi:10.5281/zenodo.8360096).
 
 Each notebook's code cells are executed verbatim, in order, in the notebook's own folder (their
-relative paths), with a non-interactive plot backend; their outputs stay where they write them
-(SCADA/SCADA-FINAL.csv), which is where adseq reads it. Their SHAP / figure cells after the MLP
+relative paths), with a non-interactive plot backend. Their processed data set (SCADA-FINAL.csv)
+is moved to data/processed/, where adseq reads it, and linked back into their folder for their
+MLP notebook. Their SHAP / figure cells after the MLP
 metrics are not run (SHAP takes hours and is not needed). Run in an environment from their time (pandas 2.1; their code uses the
 since-removed freq='T' and fillna(method=...)):
 
@@ -24,6 +25,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent.parent
 REF = ROOT / "reference" / "schroer2024"
 RAW = ROOT / "data" / "raw" / "muscatine_scada.csv"  # = their SCADA-raw.csv
+PROCESSED = ROOT / "data" / "processed" / "SCADA-FINAL.csv"  # where adseq reads it
 PREDS = ROOT / "runs" / "schroer_repro"
 
 
@@ -54,9 +56,14 @@ def link(target: Path, name: Path) -> None:
         name.symlink_to(target)
 
 
-link(RAW, REF / "SCADA" / "SCADA-raw.csv")
-if not (REF / "SCADA" / "SCADA-FINAL.csv").exists():
-    run("SCADA/SCADA-pretreatment.ipynb")  # writes their SCADA-FINAL.csv
+theirs = REF / "SCADA" / "SCADA-FINAL.csv"  # where their notebooks write / read it
+if not PROCESSED.exists():
+    if not theirs.exists() or theirs.is_symlink():  # not built yet (else: built by an older layout)
+        link(RAW, REF / "SCADA" / "SCADA-raw.csv")
+        run("SCADA/SCADA-pretreatment.ipynb")  # writes theirs
+    PROCESSED.parent.mkdir(parents=True, exist_ok=True)
+    theirs.replace(PROCESSED)
+link(PROCESSED, theirs)
 ns = run("SCADA/SCADA-MLP.ipynb", slice(0, 4))  # their final MLP, trained and scored
 PREDS.mkdir(parents=True, exist_ok=True)
 out = PREDS / "schroer_mlp_test.csv"
