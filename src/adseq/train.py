@@ -149,12 +149,17 @@ def fit_recurrent(
     model = make_model(name, hp, ds.n_features).to(DEVICE)
     opt = torch.optim.Adam(model.parameters(), lr=hp["lr"], weight_decay=hp["weight_decay"])
     loss_fn = nn.L1Loss() if hp["loss"] == "l1" else nn.MSELoss()
-    X_val, y_val = inputs(val), y[val].to(DEVICE)
+    # validation in chunks: with every training minute (--stride 1) the ~77k validation windows
+    # would take ~0.8 GB at once
+    val_chunks = np.array_split(val, max(1, len(val) // 4096))
 
     def val_rmse() -> float:
         model.eval()
+        sq = 0.0
         with torch.no_grad():
-            return (model(X_val) - y_val).pow(2).mean().sqrt().item()
+            for c in val_chunks:
+                sq += (model(inputs(c)) - y[c].to(DEVICE)).pow(2).sum().item()
+        return (sq / len(val)) ** 0.5
 
     # epoch 0 = untrained weights, so there is always a state to restore
     best_rmse, best_state, best_epoch = val_rmse(), copy.deepcopy(model.state_dict()), 0
