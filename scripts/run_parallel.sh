@@ -6,10 +6,6 @@
 # Run it inside tmux (`tmux new -s adseq`, detach with Ctrl-b d) so it survives closing the
 # terminal.
 #
-# Tuning uses TUNE_FLAGS: every 10th minute for train / val (neighbouring minutes are
-# near-duplicates), with the epoch limits scaled to match. Evaluation, the reported numbers,
-# trains on every minute with the default limits. Your flags come last, so they override both.
-#
 # Each recurrent model gets its own process with ONE thread: these small RNNs train faster on
 # one thread than on eight (measured 4.5 vs 8.2 s/epoch), so six single-thread processes get far
 # more done than one process using every core. LightGBM is tuned in a seventh process with two
@@ -26,7 +22,6 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 FLAGS=("$@")
-TUNE_FLAGS=(--stride 10 --max-epochs 200 --patience 20)
 LOGS=runs/logs
 mkdir -p "$LOGS"
 adseq() { uv run --no-sync adseq "$@"; }  # no concurrent re-syncs of the environment
@@ -37,7 +32,7 @@ uv run --no-sync python -c "import torch" ||
 pids=()
 for m in lstm_res lstm gru_res gru rnn_res rnn; do  # slowest first
   (export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
-   adseq tune --models "$m" "${TUNE_FLAGS[@]}" "${FLAGS[@]}" &&
+   adseq tune --models "$m" "${FLAGS[@]}" &&
      adseq evaluate --models "$m" "${FLAGS[@]}"
   ) >"$LOGS/$m.log" 2>&1 &
   pids+=($!)
@@ -45,7 +40,7 @@ for m in lstm_res lstm gru_res gru rnn_res rnn; do  # slowest first
   sleep 60
 done
 (export OMP_NUM_THREADS=2 MKL_NUM_THREADS=2
- adseq tune --models lgbm_res lgbm "${TUNE_FLAGS[@]}" "${FLAGS[@]}"
+ adseq tune --models lgbm_res lgbm "${FLAGS[@]}"
 ) >"$LOGS/trees.log" 2>&1 &
 pids+=($!)
 echo "$(date +%H:%M) started tuning lgbm_res lgbm (pid $!)"
