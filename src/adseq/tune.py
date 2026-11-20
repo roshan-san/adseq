@@ -8,8 +8,9 @@ Every trial is an MLflow run (tags job=tune, model, trial, pruned) with its lear
 
 Pruning (MedianPruner, recurrent models only): after the first PRUNE_STARTUP finished trials, a
 trial stops early when its best val RMSE so far is worse than the median of earlier trials at the
-same epoch, checked every epoch after PRUNE_WARMUP_EPOCHS. Its curve up to that point is kept; it
-never becomes the best trial. LightGBM trials are not pruned: early stopping already ends a poor
+same epoch, checked every epoch once it has made PRUNE_WARMUP_PASSES passes over the training data
+(that many epochs x --stride, so the warmup is the same amount of training at any stride). Its
+curve up to that point is kept; it never becomes the best trial. LightGBM trials are not pruned: early stopping already ends a poor
 one.
 
 The objective `val_rmse` is in scaled units (target min-max scaled on the training period);
@@ -32,7 +33,9 @@ from .models import TREE_MODELS, UNTRAINED_MODELS
 from .tracking import log_run
 
 PRUNE_STARTUP = 5  # finished trials before any pruning (Optuna's MedianPruner default)
-PRUNE_WARMUP_EPOCHS = 2  # a recurrent trial is never pruned on its first epoch
+# passes over the training data before a trial may be pruned: slow starters (low learning rate)
+# need it; the tuned gru_res is still 5.8 % above its final val RMSE after 2 passes, 1.9 % after 3
+PRUNE_WARMUP_PASSES = 3
 FINISHED = (TrialState.COMPLETE, TrialState.PRUNED)  # what counts towards --n-trials
 
 
@@ -86,7 +89,7 @@ def open_study(cfg: Config, name: str) -> optuna.Study:
         direction="minimize",
         load_if_exists=True,
         pruner=optuna.pruners.MedianPruner(
-            n_startup_trials=PRUNE_STARTUP, n_warmup_steps=PRUNE_WARMUP_EPOCHS
+            n_startup_trials=PRUNE_STARTUP, n_warmup_steps=PRUNE_WARMUP_PASSES * cfg.stride
         ),
     )
     # seed 0 for a new study, so a run without interruptions can be replayed exactly; after a

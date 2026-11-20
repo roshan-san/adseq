@@ -48,6 +48,7 @@ Useful flags (all commands take the same ones; `uv run adseq <command> --help` l
 | `--models` | all | e.g. `--models gru_res lstm_res` |
 | `--n-trials` | 50 | Optuna trials per tuned model |
 | `--max-epochs` / `--patience` | 50 / 10 | recurrent training and early stopping |
+| `--stride` | 1 | train / validate on every k-th minute (test: always every minute) |
 | `--seeds` | 1 2 3 4 5 | evaluation seeds |
 
 Quick check that everything runs (a few minutes on a CPU):
@@ -62,11 +63,16 @@ Tuning resumes where it stopped: re-running continues each model's Optuna study 
 ### All models in parallel (CPU)
 
 ```bash
-scripts/run_parallel.sh --name main
+tmux new -s adseq                     # so it survives closing the terminal
+scripts/run_parallel.sh --name main   # then Ctrl-b d to detach; `tmux attach -t adseq` to return
 ```
 
 One single-threaded process per recurrent model plus one for LightGBM and the baselines, then the
 report. Logs go to `runs/logs/`; re-run the script to resume after a failure.
+
+Tuning trains and validates on every 10th minute (`--stride 10 --max-epochs 200 --patience 20`):
+neighbouring minutes are near-duplicates, so it finds the same kind of models several times
+faster. Evaluation, which produces the reported numbers, trains on every minute.
 
 ## Outputs
 

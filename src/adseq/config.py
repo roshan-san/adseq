@@ -27,6 +27,9 @@ class Config:
     """Models to tune / evaluate."""
     val_frac: float = 0.2
     """Fraction of the training rows (the last ones) used for validation."""
+    stride: int = 1
+    """Train and validate on every stride-th minute (test: always every minute). Ridge always
+    fits on every minute, as in Schroer & Just's notebook."""
 
     n_trials: int = 50
     """Optuna trials per tuned model (completed or pruned)."""

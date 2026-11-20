@@ -104,7 +104,8 @@ def fit_ridge(ds: Dataset) -> tuple[Pipeline, dict, Curve]:
     """Their linear model (SCADA-linear-regression.ipynb): StandardScaler + RidgeCV with its
     default penalties (0.1, 1, 10); the one with the best R2 over 5 TimeSeriesSplit folds is
     refit on all rows. Fit on every pre-test row (train + val, as theirs saw their whole training
-    set), so no val split is needed. float64, as the lag features are collinear."""
+    set), so no val split is needed; every minute, whatever the stride. float64, as the lag
+    features are collinear."""
     rows = np.flatnonzero(ds.split != "test")
     model = make_pipeline(StandardScaler(), RidgeCV(cv=TimeSeriesSplit(gap=RIDGE_CV_GAP)))
     model.fit(ds.X[rows].astype(float), ds.y[rows].astype(float))

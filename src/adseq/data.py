@@ -10,9 +10,11 @@ Step 2, ours:
   - validation = the last `val_frac` of their training rows; the 24 h before validation and
     before test are dropped from train / val, so no training label overlaps a later period
   - min-max scalers fit on training rows only
-  - every minute of train / val / test is a sample (except the first MAX_WINDOW hours, which
-    lack a full window)
+  - every minute of train / val / test is a sample (except the first MAX_WINDOW - 1 hours,
+    which lack a full window)
   - each sample minute t gets a window of the features at t, t-60 min, ..., t-(L-1)*60 min
+  - the windowed models train and validate on every `stride`-th minute only (neighbouring
+    minutes are near-duplicates); test is always scored on every minute
 """
 
 from dataclasses import dataclass, field
@@ -69,6 +71,7 @@ class Dataset:
     y_prev: np.ndarray  # (N,) their persistence baseline, ft^3/min
     y_offset: float  # target min-max scaler, fit on the training rows
     y_scale: float
+    stride: int = 1  # part("train") / part("val") keep every stride-th minute
     y: np.ndarray = field(init=False)  # (N,) scaled target, what the models are trained on
 
     def __post_init__(self) -> None:
@@ -91,7 +94,12 @@ class Dataset:
         return self.grid[self.pos[idx, None] - lags]
 
     def part(self, name: str) -> np.ndarray:
-        return np.flatnonzero(self.split == name)
+        """Sample indices of one split. Train and val are thinned to every `stride`-th minute;
+        test always keeps every minute."""
+        rows = self.split == name
+        if name != "test":
+            rows &= self.pos % self.stride == 0
+        return np.flatnonzero(rows)
 
     def scale(self, y: np.ndarray) -> np.ndarray:
         """ft^3/min -> the scaled units the models are trained in."""
@@ -134,4 +142,5 @@ def build_dataset(df: pd.DataFrame, cfg: Config) -> Dataset:
         y_prev=df[PERSISTENCE].to_numpy(float)[keep],
         y_offset=y_offset,
         y_scale=y_scale,
+        stride=cfg.stride,
     )
