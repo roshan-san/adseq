@@ -29,7 +29,7 @@ dependencies = [
     { name = "numpy" },
     { name = "optuna" },
     { name = "pandas" },
-    { name = "scipy" },
+    { name = "scikit-learn" },
     { name = "tyro" },
 ]
 
@@ -56,7 +56,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
     { name = "optuna", specifier = ">=4" },
     { name = "pandas", specifier = ">=2.2" },
-    { name = "scipy", specifier = ">=1.13" },
+    { name = "scikit-learn", specifier = ">=1.4" },
     { name = "torch", marker = "extra == 'cpu'", specifier = ">=2.5", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "adseq", extra = "cpu" } },
     { name = "torch", marker = "extra == 'cu132'", specifier = ">=2.5", index = "https://download.pytorch.org/whl/cu132", conflict = { package = "adseq", extra = "cu132" } },
     { name = "tyro", specifier = ">=0.9" },

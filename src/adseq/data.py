@@ -10,16 +10,17 @@ Step 2, ours:
   - validation = the last `val_frac` of their training rows; the 24 h before validation and
     before test are dropped from train / val, so no training label overlaps a later period
   - min-max scalers fit on training rows only
-  - train / val: a fixed random 1/`stride` of the minutes (neighbours are near-duplicates)
+  - every minute of train / val / test is a sample (except the first MAX_WINDOW hours, which
+    lack a full window)
   - each sample minute t gets a window of the features at t, t-60 min, ..., t-(L-1)*60 min
 """
 
-import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from sklearn.model_selection import train_test_split
 
 from .config import Config
 
@@ -29,6 +30,7 @@ HORIZON = 1440  # minutes ahead the target reaches
 STEP = 60  # minutes between window steps
 WINDOWS = (12, 24, 48, 72)  # hours of history a recurrent model may be tuned to
 MAX_WINDOW = max(WINDOWS)  # every sample has this much history, so any tuned window fits
+RAW = Path("data/raw/muscatine_scada.csv")  # their SCADA-raw.csv; input of their pretreatment
 PROCESSED = Path("data/processed/SCADA-FINAL.csv")  # their pretreatment notebook's output
 MLP_DROPS = ["day_sin", "day_cos", "D2_TEMPERATURE", "Q-influent_MGD"]  # their SCADA-MLP, cell 0
 
@@ -42,14 +44,14 @@ def load_processed() -> pd.DataFrame:
 
 def time_split(dates: pd.DatetimeIndex, val_frac: float) -> np.ndarray:
     """Their 80/20 test split (sklearn train_test_split, shuffle=False), our val split of the
-    training rows, and 24-h "gap" rows before val and before test."""
-    n = len(dates)
-    n_train = n - math.ceil(0.2 * n)
-    split = np.array(["train"] * n_train + ["test"] * (n - n_train), dtype=object)
-    n_val = round(n_train * val_frac)
-    split[n_train - n_val : n_train] = "val"
+    training rows the same way, and 24-h "gap" rows before val and before test."""
+    rows = np.arange(len(dates))
+    train_rows, test_rows = train_test_split(rows, test_size=0.2, shuffle=False)
+    train_rows, val_rows = train_test_split(train_rows, test_size=val_frac, shuffle=False)
+    split = np.empty(len(rows), dtype=object)
+    split[train_rows], split[val_rows], split[test_rows] = "train", "val", "test"
     gap = pd.Timedelta(minutes=HORIZON)
-    test0, val0 = dates[n_train], dates[n_train - n_val]
+    test0, val0 = dates[test_rows[0]], dates[val_rows[0]]
     split[(split == "val") & (dates >= test0 - gap)] = "gap"
     split[(split == "train") & (dates >= val0 - gap)] = "gap"
     return split.astype(str)
@@ -57,16 +59,24 @@ def time_split(dates: pd.DatetimeIndex, val_frac: float) -> np.ndarray:
 
 @dataclass
 class Dataset:
-    dates: pd.DatetimeIndex  # sample minute t
-    split: np.ndarray  # "train" / "val" / "test"
+    """N samples (one per minute t) over a (minutes, F) feature grid."""
+
+    dates: pd.DatetimeIndex  # (N,) sample minute t
+    split: np.ndarray  # (N,) "train" / "val" / "test"
     grid: np.ndarray  # (minutes, F) scaled features on a regular minute grid
     pos: np.ndarray  # (N,) row of each sample in the grid
-    y: np.ndarray  # (N,) scaled target: (y - y_offset) / y_scale
     y_true: np.ndarray  # (N,) their target, ft^3/min
     y_prev: np.ndarray  # (N,) their persistence baseline, ft^3/min
-    y_offset: float
+    y_offset: float  # target min-max scaler, fit on the training rows
     y_scale: float
-    n_features: int
+    y: np.ndarray = field(init=False)  # (N,) scaled target, what the models are trained on
+
+    def __post_init__(self) -> None:
+        self.y = self.scale(self.y_true).astype(np.float32)
+
+    @property
+    def n_features(self) -> int:
+        return self.grid.shape[1]
 
     @property
     def X(self) -> np.ndarray:
@@ -110,24 +120,18 @@ def build_dataset(df: pd.DataFrame, cfg: Config) -> Dataset:
     grid = ((df[features] - lo) / (hi - lo).replace(0, 1)).reindex(full).ffill()
     pos_all = full.get_indexer(dates)
 
-    # samples: every row of the test set; a fixed random 1/stride of the train / val minutes
-    # (so every minute of the hour is seen); all with MAX_WINDOW hours of history
-    sampled = np.random.default_rng(0).random(len(df)) < 1 / cfg.stride
-    keep = (split == "test") | (np.isin(split, ("train", "val")) & sampled)
-    keep &= pos_all >= STEP * (MAX_WINDOW - 1)
+    # samples: every train / val / test minute (not the gaps) with MAX_WINDOW hours of history
+    keep = (split != "gap") & (pos_all >= STEP * (MAX_WINDOW - 1))
     if not keep[split == "test"].all():
         raise ValueError("a test row lacks a full window; lower MAX_WINDOW")
 
-    y_true = y_all[keep]
     return Dataset(
         dates=dates[keep],
         split=split[keep],
         grid=grid.to_numpy(np.float32),
         pos=pos_all[keep],
-        y=((y_true - y_offset) / y_scale).astype(np.float32),  # = Dataset.scale
-        y_true=y_true,
+        y_true=y_all[keep],
         y_prev=df[PERSISTENCE].to_numpy(float)[keep],
         y_offset=y_offset,
         y_scale=y_scale,
-        n_features=len(features),
     )

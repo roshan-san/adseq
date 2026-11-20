@@ -1,5 +1,5 @@
 """Every experiment setting, in one flat dataclass. tyro turns each field into a CLI flag
-(`--stride 30`) and the docstring under it into the help text."""
+(`--n-trials 50`) and the docstring under it into the help text."""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,21 +22,22 @@ ModelName = Literal[
 @dataclass
 class Config:
     name: str = "main"
+    """Experiment name: outputs go to runs/<name>/, and it names the MLflow experiment."""
     models: tuple[ModelName, ...] = get_args(ModelName)
-
-    data_path: Path = Path("data/raw/muscatine_scada.csv")
-    """SCADA-raw.csv; scripts/run_schroer.py turns it into their processed data set."""
+    """Models to tune / evaluate."""
     val_frac: float = 0.2
-    stride: int = 60
-    """Train / val use a random 1/stride of their minutes (every test minute is always scored)."""
+    """Fraction of the training rows (the last ones) used for validation."""
 
-    n_trials: int = 20
-    max_epochs: int = 300
-    patience: int = 20
-    seeds: tuple[int, ...] = tuple(range(5))
+    n_trials: int = 50
+    """Optuna trials per tuned model (completed or pruned)."""
+    max_epochs: int = 50
+    """Upper limit on training epochs for a recurrent model."""
+    patience: int = 10
+    """Stop after this many epochs without a better validation RMSE."""
+    seeds: tuple[int, ...] = tuple(range(1, 6))
+    """Seeds each model is evaluated with."""
     mlflow_uri: str = "sqlite:///runs/mlflow.db"
-    """MLflow tracking store, one for every --name (each is an experiment). Browse it with
-    `uv run mlflow ui --backend-store-uri sqlite:///runs/mlflow.db`."""
+    """MLflow tracking URI."""
 
     @property
     def run_dir(self) -> Path:

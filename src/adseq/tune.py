@@ -1,10 +1,16 @@
 """Equal-budget hyper-parameter search with Optuna (TPE sampler, fixed seed).
 
-Every tuned model gets the same number of finished trials (--n-trials), each trained with seed 0
-and scored on the same validation samples. Each model's study is saved in
+Every tuned model gets the same number of finished trials (--n-trials, completed or pruned), each
+trained with seed 0 and scored on the same validation samples. Each model's study is saved in
 runs/<name>/optuna/<model>.log, so re-running continues it: finished trials are kept, and a trial
-cut off by a crash is marked failed and run again. Run one process per model at a time.
-Every trial is also an MLflow run (tag job=tune) with its learning curve.
+cut off by a crash stays "running" and does not count. Run one process per model at a time.
+Every trial is an MLflow run (tags job=tune, model, trial, pruned) with its learning curve.
+
+Pruning (MedianPruner, recurrent models only): after the first PRUNE_STARTUP finished trials, a
+trial stops early when its best val RMSE so far is worse than the median of earlier trials at the
+same epoch, checked every epoch after PRUNE_WARMUP_EPOCHS. Its curve up to that point is kept; it
+never becomes the best trial. LightGBM trials are not pruned: early stopping already ends a poor
+one.
 
 The objective `val_rmse` is in scaled units (target min-max scaled on the training period);
 the `[tune]` line also prints it in ft^3/min.
@@ -21,8 +27,13 @@ from optuna.trial import Trial, TrialState
 
 from .config import Config
 from .data import WINDOWS, Dataset
+from .fit import fit
 from .models import TREE_MODELS, UNTRAINED_MODELS
-from .train import fit_tuned, log_curve
+from .tracking import log_run
+
+PRUNE_STARTUP = 5  # finished trials before any pruning (Optuna's MedianPruner default)
+PRUNE_WARMUP_EPOCHS = 2  # a recurrent trial is never pruned on its first epoch
+FINISHED = (TrialState.COMPLETE, TrialState.PRUNED)  # what counts towards --n-trials
 
 
 def suggest(trial: Trial, name: str) -> dict:
@@ -65,35 +76,54 @@ def load_hp(cfg: Config, name: str) -> dict:
     return json.loads(path.read_text())
 
 
-def tune(cfg: Config, ds: Dataset, name: str) -> dict:
+def open_study(cfg: Config, name: str) -> optuna.Study:
+    """The model's study, new or resumed from its journal file."""
     study_file = cfg.run_dir / "optuna" / f"{name}.log"
     study_file.parent.mkdir(exist_ok=True)
-    storage = JournalStorage(JournalFileBackend(str(study_file)))
     study = optuna.create_study(
-        study_name=name, storage=storage, direction="minimize", load_if_exists=True
+        study_name=name,
+        storage=JournalStorage(JournalFileBackend(str(study_file))),
+        direction="minimize",
+        load_if_exists=True,
+        pruner=optuna.pruners.MedianPruner(
+            n_startup_trials=PRUNE_STARTUP, n_warmup_steps=PRUNE_WARMUP_EPOCHS
+        ),
     )
     # seed 0 for a new study, so a run without interruptions can be replayed exactly; after a
     # resume the seed moves on, else the sampler's random first trials would repeat earlier ones
     study.sampler = optuna.samplers.TPESampler(seed=len(study.trials))
-    # a trial still "running" was cut off by a crash (one process per model): fail it, run anew
-    for t in study.get_trials(deepcopy=False, states=(TrialState.RUNNING,)):
-        storage.set_trial_state_values(t._trial_id, TrialState.FAIL)
+    return study
 
-    def objective(trial: Trial) -> float:
-        hp = suggest(trial, name)
-        tags = {"job": "tune", "model": name, "trial": str(trial.number)}
-        with mlflow.start_run(run_name=f"{name}-t{trial.number}", tags=tags):
-            mlflow.log_params(hp)
-            info, curve = fit_tuned(name, hp, ds, cfg, seed=0)  # no test predictions
-            log_curve(curve)
-            mlflow.log_metrics({k: info[k] for k in ("val_rmse_scaled", "epochs", "n_params")})
-            mlflow.set_tag("device", info["device"])
-        return info["val_rmse_scaled"]  # best epoch
 
-    done = len(study.get_trials(deepcopy=False, states=(TrialState.COMPLETE,)))
-    if cfg.n_trials > done:
+def run_trial(trial: Trial, name: str, ds: Dataset, cfg: Config) -> float:
+    """Train one suggested configuration; its best val RMSE (or TrialPruned)."""
+    hp = suggest(trial, name)
+    pruned = False
+
+    def on_step(epoch: int, best_so_far: float) -> bool:
+        nonlocal pruned
+        trial.report(best_so_far, epoch)
+        pruned = trial.should_prune()
+        return pruned
+
+    tags = {"job": "tune", "model": name, "trial": str(trial.number)}
+    with mlflow.start_run(run_name=f"{name}-t{trial.number}", tags=tags):
+        _, info, curve = fit(name, hp, ds, cfg, seed=0, on_step=on_step)
+        log_run(hp, info, curve)
+        mlflow.set_tag("pruned", str(pruned).lower())
+    if pruned:
+        raise optuna.TrialPruned()
+    return info["val_rmse_scaled"]
+
+
+def tune(cfg: Config, ds: Dataset, name: str) -> dict:
+    """Run the model's study up to --n-trials finished trials; save and return the best
+    hyper-parameters (runs/<name>/best_hp/<model>.json)."""
+    study = open_study(cfg, name)
+    remaining = cfg.n_trials - len(study.get_trials(deepcopy=False, states=FINISHED))
+    if remaining > 0:
         # a trial that raises stops the study with its traceback; re-run to continue
-        study.optimize(objective, n_trials=cfg.n_trials - done)
+        study.optimize(lambda trial: run_trial(trial, name, ds, cfg), n_trials=remaining)
 
     best = study.best_params
     path = hp_file(cfg, name)
