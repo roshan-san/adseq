@@ -71,9 +71,8 @@ def predict(fitted: Fitted, name: str, hp: dict, ds: Dataset) -> np.ndarray:
 def predict_chunk(fitted: RecurrentNet | lgb.Booster, hp: dict, ds: Dataset, idx) -> np.ndarray:
     """A windowed model's raw output (scaled units, before adding base_level) for samples idx."""
     if isinstance(fitted, lgb.Booster):
-        return fitted.predict(
-            tree_input(ds, idx, hp["window"]), num_iteration=fitted.best_iteration
-        )
+        x = tree_input(ds, idx, hp["window"])
+        return np.asarray(fitted.predict(x, num_iteration=fitted.best_iteration))
     fitted.eval()
     with torch.no_grad():
         return fitted(net_input(ds, idx, hp["window"])).cpu().numpy().astype(float)
@@ -112,7 +111,7 @@ def fit_ridge(ds: Dataset) -> tuple[Pipeline, dict]:
     rows = np.flatnonzero(ds.split != "test")
     model = make_pipeline(StandardScaler(), RidgeCV(cv=TimeSeriesSplit(gap=RIDGE_CV_GAP)))
     model.fit(ds.X[rows].astype(float), ds.y[rows].astype(float))
-    ridge = model[-1]
+    ridge = model.named_steps["ridgecv"]
     info = {"epochs": 0, "alpha": float(ridge.alpha_), "n_params": ridge.coef_.size + 1}
     return model, info
 
