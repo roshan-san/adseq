@@ -9,7 +9,7 @@ from typing import Annotated
 import tyro
 
 from .config import Config
-from .data import PROCESSED, RAW, build_dataset, load_processed
+from .data import PROCESSED, build_dataset, load_processed
 from .evaluate import evaluate
 from .models import TUNED_MODELS
 from .report import make_report
@@ -24,6 +24,7 @@ Cfg = Annotated[Config, tyro.conf.arg(name="")]
 # Their code (MIT), doi:10.5281/zenodo.8360096 -> reference/schroer2024/
 CODE_URL = "https://zenodo.org/api/records/8360096/files/hunter-schroer/municipal-biogas-forecasting-v1.0.0.zip/content"
 SCADA_URL = "https://iro.uiowa.edu/view/fileRedirect?instCode=01IOWA_INST&filePid=13894605000002771&download=true"
+RAW = Path("data/raw/muscatine_scada.csv")  # their SCADA-raw.csv; input of their pretreatment
 CODE_DIR = Path("reference/schroer2024")
 
 

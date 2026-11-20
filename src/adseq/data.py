@@ -32,7 +32,6 @@ HORIZON = 1440  # minutes ahead the target reaches
 STEP = 60  # minutes between window steps
 WINDOWS = (12, 24, 48, 72)  # hours of history a recurrent model may be tuned to
 MAX_WINDOW = max(WINDOWS)  # every sample has this much history, so any tuned window fits
-RAW = Path("data/raw/muscatine_scada.csv")  # their SCADA-raw.csv; input of their pretreatment
 PROCESSED = Path("data/processed/SCADA-FINAL.csv")  # their pretreatment notebook's output
 MLP_DROPS = ["day_sin", "day_cos", "D2_TEMPERATURE", "Q-influent_MGD"]  # their SCADA-MLP, cell 0
 
@@ -50,13 +49,13 @@ def time_split(dates: pd.DatetimeIndex, val_frac: float) -> np.ndarray:
     rows = np.arange(len(dates))
     train_rows, test_rows = train_test_split(rows, test_size=0.2, shuffle=False)
     train_rows, val_rows = train_test_split(train_rows, test_size=val_frac, shuffle=False)
-    split = np.empty(len(rows), dtype=object)
-    split[train_rows], split[val_rows], split[test_rows] = "train", "val", "test"
+    split = np.full(len(rows), "train", dtype="<U5")
+    split[val_rows], split[test_rows] = "val", "test"
     gap = pd.Timedelta(minutes=HORIZON)
     test0, val0 = dates[test_rows[0]], dates[val_rows[0]]
     split[(split == "val") & (dates >= test0 - gap)] = "gap"
     split[(split == "train") & (dates >= val0 - gap)] = "gap"
-    return split.astype(str)
+    return split
 
 
 @dataclass
@@ -124,9 +123,8 @@ def build_dataset(df: pd.DataFrame, cfg: Config) -> Dataset:
 
     # regular minute grid so "60 min earlier" is one fixed offset; their dropped minutes are
     # carried forward from the last row (past values only)
-    full = pd.date_range(dates[0], dates[-1], freq="min")
-    grid = ((df[features] - lo) / (hi - lo).replace(0, 1)).reindex(full).ffill()
-    pos_all = full.get_indexer(dates)
+    grid = ((df[features] - lo) / (hi - lo).replace(0, 1)).asfreq("min").ffill()
+    pos_all = grid.index.get_indexer(dates)
 
     # samples: every train / val / test minute (not the gaps) with MAX_WINDOW hours of history
     keep = (split != "gap") & (pos_all >= STEP * (MAX_WINDOW - 1))
