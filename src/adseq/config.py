@@ -16,6 +16,7 @@ ModelName = Literal[
     "rnn_res",
     "gru_res",
     "lstm_res",
+    "sj_mlp",  # Schroer & Just's MLP: imported by evaluate (not trained), skipped by tune
 ]
 
 

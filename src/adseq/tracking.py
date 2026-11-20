@@ -5,20 +5,28 @@ One experiment per --name, its artifacts in runs/mlartifacts/<name>/ (not ./mlru
   tune/<model>     tags kind=tune, model; best_val_rmse (scaled); artifact best_params.json.
                    One per model, reopened on every `adseq tune`, like its Optuna study.
     trial-<n>      tags trial, pruned; params = hyper-parameters; learning curve; fit info
-  eval/<model>     tags kind=eval, model; a new one per `adseq evaluate`
+  eval/<model>     tags kind=eval, model; a new one per `adseq evaluate`; the report uses the
+                   newest FINISHED one per model. test_<metric>_mean / _std, n_seeds;
+                   artifact preds.npz (dates, split, y_true, preds: seeds x samples)
+    seed-<s>       params = seed + hyper-parameters; learning curve; fit info;
+                   <split>_<metric> for train / val / test
 
 Only parents carry the kind tag, so every lookup filters on it.
 """
 
 import contextlib
+import tempfile
 import time
 from pathlib import Path
 
 import mlflow
+import numpy as np
+import pandas as pd
 from mlflow.entities import Metric
 from mlflow.exceptions import MlflowException
 
 from .config import Config
+from .data import Dataset
 from .models import UNTUNED_MODELS
 
 BATCH_LIMIT = 1000  # MLflow's maximum number of metrics per log_batch call
@@ -103,3 +111,40 @@ def best_params(cfg: Config, model: str) -> dict:
         return mlflow.artifacts.load_dict(f"runs:/{run_id}/best_params.json")
     except (MlflowException, OSError) as e:
         raise missing from e
+
+
+def log_test_summary(tests: list[dict[str, float]]) -> None:
+    """Mean and std over seeds of each test metric to the active (eval) run, as
+    test_<metric>_mean / _std, and n_seeds. Sample std (NaN for one seed)."""
+    df = pd.DataFrame(tests)
+    mean, std = df.mean(), df.std()
+    mlflow.log_metrics(
+        {f"test_{m}_mean": mean[m] for m in df}
+        | {f"test_{m}_std": std[m] for m in df}
+        | {"n_seeds": len(df)}
+    )
+
+
+def log_preds(ds: Dataset, preds: np.ndarray) -> None:
+    """Every seed's predictions (seeds x samples, ft^3/min) to the active (eval) run as
+    preds.npz, with the sample dates, splits and labels, so the figure needs nothing else."""
+    with tempfile.TemporaryDirectory() as d:
+        path = Path(d, "preds.npz")
+        np.savez_compressed(
+            path,
+            dates=ds.dates.strftime("%Y-%m-%d %H:%M").to_numpy(str),
+            split=ds.split,
+            y_true=ds.y_true,
+            preds=preds,
+        )
+        mlflow.log_artifact(str(path))
+
+
+def load_preds(run_id: str) -> dict:
+    """An eval run's preds.npz: dates, split, y_true, preds (seeds x samples)."""
+    with tempfile.TemporaryDirectory() as d:
+        path = mlflow.artifacts.download_artifacts(
+            run_id=run_id, artifact_path="preds.npz", dst_path=d
+        )
+        with np.load(path) as f:
+            return dict(f)
