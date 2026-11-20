@@ -8,7 +8,6 @@ __pycache__/
 runs/
 docs/
 
-extra/
 # MLflow artifact dir (tracking itself is in runs/mlflow.db)
 mlruns/
 

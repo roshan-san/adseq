@@ -34,9 +34,9 @@ uv run --no-project --with "pandas==2.1.4" --with "numpy<2" --with "scikit-learn
 ## Run
 
 ```bash
-uv run adseq tune     --name main   # Optuna search per model -> runs/main/best_hp/
-uv run adseq evaluate --name main   # train with every seed, score -> runs/main/{metrics,preds}/
-uv run adseq report   --name main   # table + figure -> runs/main/summary.csv, figures/
+uv run adseq tune     --name main   # Optuna search per model -> MLflow tune/<model> runs
+uv run adseq evaluate --name main   # train with every seed, score -> MLflow eval/<model> runs
+uv run adseq report   --name main   # table + figure from MLflow -> runs/main/summary.csv, figures/
 uv run adseq run-all  --name main   # all three in sequence
 ```
 
@@ -47,14 +47,15 @@ Useful flags (all commands take the same ones; `uv run adseq <command> --help` l
 | `--name` | `main` | output folder `runs/<name>/` and MLflow experiment |
 | `--models` | all | e.g. `--models gru_res lstm_res` |
 | `--n-trials` | 50 | Optuna trials per tuned model |
-| `--max-epochs` / `--patience` | 50 / 10 | recurrent training and early stopping |
-| `--stride` | 1 | train / validate on every k-th minute (test: always every minute) |
+| `--max-epochs` / `--patience` | 50 / 10 | evaluation: recurrent training and early stopping |
+| `--stride` | 1 | evaluation: train / validate on every k-th minute (test: always every minute) |
+| `--tune-max-epochs` / `--tune-patience` / `--tune-stride` | 200 / 20 / 10 | the same, while tuning |
 | `--seeds` | 1 2 3 4 5 | evaluation seeds |
 
 Quick check that everything runs (a few minutes on a CPU):
 
 ```bash
-uv run adseq run-all --name smoke --models persistence ridge gru_res --n-trials 2 --max-epochs 1 --seeds 1
+uv run adseq run-all --name smoke --models persistence ridge gru_res --n-trials 2 --max-epochs 1 --tune-max-epochs 1 --seeds 1
 ```
 
 Tuning resumes where it stopped: re-running continues each model's Optuna study from
@@ -72,24 +73,36 @@ once those finish, LightGBM and the baselines are evaluated alone (their flatten
 several GB), then the report. Logs go to `runs/logs/`; re-run the script to resume after a
 failure.
 
-Tuning trains and validates on every 10th minute (`--stride 10 --max-epochs 200 --patience 20`):
-neighbouring minutes are near-duplicates, so it finds the same kind of models several times
-faster. Evaluation, which produces the reported numbers, trains on every minute.
+Tuning trains and validates on every 10th minute, with longer epoch limits (the `--tune-*`
+settings): neighbouring minutes are near-duplicates, so it finds the same kind of models several
+times faster. Evaluation, which produces the reported numbers, trains on every minute.
 
 ## Outputs
 
+Every result is in MLflow (`runs/mlflow.db`, artifacts in `runs/mlartifacts/<name>/`), one
+experiment per `--name`:
+
 ```
-runs/<name>/
-  best_hp/<model>.json       best hyper-parameters per tuned model
-  optuna/<model>.log         Optuna study (resumable)
-  metrics/<model>.csv        metrics per seed and split (train / val / test)
-  preds/<model>.npz          every seed's predictions
-  summary.csv                test metrics, mean and std over seeds
-  figures/test_predictions.pdf
-runs/mlflow.db               MLflow tracking: one run per tuning trial / evaluation seed
+tune/<model>        best_val_rmse, best_params.json (best hyper-parameters); reopened on resume
+  trial-<n>         hyper-parameters, learning curve; tag pruned
+eval/<model>        test_<metric>_mean / _std over seeds, n_seeds, preds.npz (every seed's predictions)
+  seed-<s>          hyper-parameters, learning curve, train / val / test metrics
 ```
 
-Browse the MLflow runs (filter by the `job` and `model` tags):
+`evaluate` makes a new `eval/<model>` run each time; the report uses the newest finished one per
+model (a crashed evaluation is never used). `sj_mlp` imports Schroer & Just's MLP predictions as
+an `eval/sj_mlp` run (`tune` skips it).
+
+What stays in `runs/<name>/`:
+
+```
+optuna/<model>.log           Optuna study (resume state)
+summary.csv                  the report's table, with the eval run_id of every row
+figures/test_predictions.pdf
+```
+
+`summary.csv` and `figures/` are regenerated from MLflow by `adseq report`. Browse the runs
+(filter with `tags.kind = 'eval'`):
 
 ```bash
 uv run mlflow ui --backend-store-uri sqlite:///runs/mlflow.db

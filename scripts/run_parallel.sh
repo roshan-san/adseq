@@ -52,8 +52,8 @@ if [ "$failed" = 1 ]; then
   exit 1
 fi
 
-echo "$(date +%H:%M) recurrent models done; evaluating lgbm_res lgbm persistence ridge alone"
-adseq evaluate --models lgbm_res lgbm persistence ridge "${FLAGS[@]}" >>"$LOGS/trees.log" 2>&1 ||
+echo "$(date +%H:%M) recurrent models done; evaluating lgbm_res lgbm persistence ridge sj_mlp alone"
+adseq evaluate --models lgbm_res lgbm persistence ridge sj_mlp "${FLAGS[@]}" >>"$LOGS/trees.log" 2>&1 ||
   { echo "$(date +%H:%M) evaluation failed: see $LOGS/trees.log"; exit 1; }
 
 echo "$(date +%H:%M) all models done; writing the report"
