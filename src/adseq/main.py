@@ -73,6 +73,7 @@ def evaluate_cmd(cfg: Cfg) -> None:
 
 def report_cmd(cfg: Cfg) -> None:
     """Results table (incl. Schroer & Just's own MLP) and figure."""
+    start_tracking(cfg)
     make_report(cfg)
 
 

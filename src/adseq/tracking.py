@@ -148,3 +148,13 @@ def load_preds(run_id: str) -> dict:
         )
         with np.load(path) as f:
             return dict(f)
+
+
+def latest_evals(cfg: Config) -> pd.DataFrame:
+    """The newest FINISHED eval/<model> run of each model: what the report shows."""
+    runs = mlflow.search_runs(
+        experiment_names=[cfg.name],
+        filter_string="tags.kind = 'eval' AND attributes.status = 'FINISHED'",
+        order_by=["attributes.start_time DESC"],
+    )
+    return runs.drop_duplicates("tags.model") if not runs.empty else runs
