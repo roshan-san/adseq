@@ -22,6 +22,7 @@ from pathlib import Path
 import mlflow
 import numpy as np
 import pandas as pd
+from mlflow.artifacts import download_artifacts, load_dict
 from mlflow.entities import Metric
 from mlflow.exceptions import MlflowException
 
@@ -63,9 +64,10 @@ def log_lgbm_curve(train_loss: list[float], val_rmse: list[float]) -> None:
     for step, (loss, rmse) in enumerate(zip(train_loss, val_rmse, strict=True), start=1):
         metrics.append(Metric("epoch_train_loss", float(loss), t, step))
         metrics.append(Metric("epoch_val_rmse", float(rmse), t, step))
-    run_id = mlflow.active_run().info.run_id
+    run = mlflow.active_run()
+    assert run is not None  # fit is always called inside a trial or seed run
     for i in range(0, len(metrics), BATCH_LIMIT):
-        mlflow.MlflowClient().log_batch(run_id, metrics=metrics[i : i + BATCH_LIMIT])
+        mlflow.MlflowClient().log_batch(run.info.run_id, metrics=metrics[i : i + BATCH_LIMIT])
 
 
 def tune_parent_id(cfg: Config, model: str) -> str | None:
@@ -104,7 +106,7 @@ def best_params(cfg: Config, model: str) -> dict:
         return {}
     run_id = tune_parent_id(cfg, model)
     try:  # fails for no tune run (runs:/None/...) or one that crashed before its first finish
-        return mlflow.artifacts.load_dict(f"runs:/{run_id}/best_params.json")
+        return load_dict(f"runs:/{run_id}/best_params.json")
     except MlflowException as e:
         raise LookupError(
             f"no tuned hyper-parameters for {model} in experiment {cfg.name}: "
@@ -116,12 +118,9 @@ def log_test_summary(tests: list[dict[str, float]]) -> None:
     """Mean and std over seeds of each test metric to the active (eval) run, as
     test_<metric>_mean / _std, and n_seeds. Sample std (NaN for one seed)."""
     df = pd.DataFrame(tests)
-    mean, std = df.mean(), df.std()
-    mlflow.log_metrics(
-        {f"test_{m}_mean": mean[m] for m in df}
-        | {f"test_{m}_std": std[m] for m in df}
-        | {"n_seeds": len(df)}
-    )
+    mean = {f"test_{m}_mean": float(v) for m, v in df.mean().items()}
+    std = {f"test_{m}_std": float(v) for m, v in df.std().items()}
+    mlflow.log_metrics(mean | std | {"n_seeds": float(len(df))})
 
 
 def log_preds(ds: Dataset, preds: np.ndarray) -> None:
@@ -142,9 +141,7 @@ def log_preds(ds: Dataset, preds: np.ndarray) -> None:
 def load_preds(run_id: str) -> dict:
     """An eval run's preds.npz: dates, split, y_true, preds (seeds x samples)."""
     with tempfile.TemporaryDirectory() as d:
-        path = mlflow.artifacts.download_artifacts(
-            run_id=run_id, artifact_path="preds.npz", dst_path=d
-        )
+        path = download_artifacts(run_id=run_id, artifact_path="preds.npz", dst_path=d)
         with np.load(path) as f:
             return dict(f)
 
