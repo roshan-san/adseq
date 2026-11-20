@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, get_args
 
-WANDB_PROJECT = "adseq"
 ModelName = Literal[
     "persistence",
     "ridge",
@@ -35,7 +34,9 @@ class Config:
     max_epochs: int = 300
     patience: int = 20
     seeds: tuple[int, ...] = tuple(range(5))
-    wandb_mode: Literal["online", "offline", "disabled"] = "online"
+    mlflow_uri: str = "sqlite:///runs/mlflow.db"
+    """MLflow tracking store, one for every --name (each is an experiment). Browse it with
+    `uv run mlflow ui --backend-store-uri sqlite:///runs/mlflow.db`."""
 
     @property
     def run_dir(self) -> Path:

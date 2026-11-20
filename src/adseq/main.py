@@ -1,12 +1,12 @@
 """Command line (tyro). Run `uv run adseq --help` or `uv run adseq <command> --help`."""
 
 import io
-import os
 import urllib.request
 import zipfile
 from pathlib import Path
 from typing import Annotated
 
+import mlflow
 import tyro
 
 from .config import Config
@@ -47,8 +47,16 @@ def fetch_cmd(cfg: Cfg) -> None:
     print(f"have {dest}")
 
 
+def start_tracking(cfg: Config) -> None:
+    """MLflow: log to cfg.mlflow_uri, in the experiment named --name."""
+    Path("runs").mkdir(exist_ok=True)
+    mlflow.set_tracking_uri(cfg.mlflow_uri)
+    mlflow.set_experiment(cfg.name)
+
+
 def tune_cmd(cfg: Cfg) -> None:
-    """W&B Sweeps search for every tuned model (same run budget for all)."""
+    """Optuna search for every tuned model (same trial budget for all)."""
+    start_tracking(cfg)
     ds = build_dataset(load_processed(), cfg)  # built once, shared by every tuned model
     for name in cfg.models:
         if name in TUNED_MODELS:
@@ -57,6 +65,7 @@ def tune_cmd(cfg: Cfg) -> None:
 
 def evaluate_cmd(cfg: Cfg) -> None:
     """Train each model with every seed using its best hyper-parameters; score on the test period."""
+    start_tracking(cfg)
     evaluate(cfg, load_processed())
 
 
@@ -73,7 +82,6 @@ def run_all_cmd(cfg: Cfg) -> None:
 
 
 def main() -> None:
-    os.environ.setdefault("WANDB_SILENT", "true")
     tyro_map = {
         "fetch": fetch_cmd,
         "tune": tune_cmd,

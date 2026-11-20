@@ -1,19 +1,18 @@
 """Train every model with several seeds and score it on the test period.
 
-Each (model, seed) is a Weights & Biases run in project "adseq", grouped by --name:
-hyper-parameters, the learning curve and the train/val/test metrics. Online by default;
---wandb-mode offline keeps them in runs/<name>/wandb/ for a later `wandb sync`.
+Each (model, seed) is an MLflow run (tag job=evaluate) in the experiment named --name:
+hyper-parameters, the learning curve and the train/val/test metrics.
 
 Outputs, one file per model (so models can be evaluated in parallel terminals):
   runs/<name>/metrics/<model>.csv   one row per (seed, split)
   runs/<name>/preds/<model>.npz     every seed's predictions, for the report's DM tests
 """
 
+import mlflow
 import numpy as np
 import pandas as pd
-import wandb
 
-from .config import WANDB_PROJECT, Config
+from .config import Config
 from .data import Dataset, build_dataset
 from .metrics import regression_metrics
 from .models import UNTRAINED_MODELS
@@ -36,17 +35,11 @@ def evaluate_model(cfg: Config, ds: Dataset, name: str) -> pd.DataFrame:
     n_inputs = 1 if name == "persistence" else ds.n_features  # for the adjusted R2
     preds, rows = [], []
     for seed in seeds:
-        with wandb.init(
-            project=WANDB_PROJECT,
-            group=cfg.name,
-            job_type="evaluate",
-            name=f"{name}-s{seed}",
-            config={"model": name, "seed": seed, **hp},
-            mode=cfg.wandb_mode,
-            dir=cfg.run_dir,
-        ) as run:
+        tags = {"job": "evaluate", "model": name, "seed": str(seed)}
+        with mlflow.start_run(run_name=f"{name}-s{seed}", tags=tags):
+            mlflow.log_params({"seed": seed, **hp})
             pred, info, curve = train_and_predict(name, hp, ds, cfg, seed)
-            log_curve(run, curve)
+            log_curve(curve)
             scores = {
                 split: regression_metrics(ds.y_true[ds.part(split)], pred[ds.part(split)], n_inputs)
                 for split in SPLITS
@@ -54,7 +47,8 @@ def evaluate_model(cfg: Config, ds: Dataset, name: str) -> pd.DataFrame:
             flat = {
                 f"{split}_{metric}": v for split, m in scores.items() for metric, v in m.items()
             }
-            run.summary.update(flat | info)
+            mlflow.log_metrics(flat | {k: v for k, v in info.items() if not isinstance(v, str)})
+            mlflow.set_tags({k: v for k, v in info.items() if isinstance(v, str)})  # device
         preds.append(pred)
         rows += [{"model": name, "seed": seed, "split": s, **m, **info} for s, m in scores.items()]
         test = scores["test"]

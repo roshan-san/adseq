@@ -6,9 +6,11 @@ __pycache__/
 
 # experiment outputs: regenerate with `uv run adseq run-all --name <name>`
 runs/
+docs/
 
-# W&B local files (the runs are already stored online in W&B)
-wandb/
+
+# MLflow artifact dir (tracking itself is in runs/mlflow.db)
+mlruns/
 
 # downloaded data: `uv run adseq fetch`
 data/

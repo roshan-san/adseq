@@ -19,8 +19,8 @@ from torch import nn
 RESIDUAL_MODELS = ("rnn_res", "gru_res", "lstm_res")  # proposed
 RECURRENT_MODELS = ("rnn", "gru", "lstm", *RESIDUAL_MODELS)
 TREE_MODELS = ("lgbm", "lgbm_res")
-TUNED_MODELS = (*RECURRENT_MODELS, *TREE_MODELS)  # W&B sweep each
-UNTRAINED_MODELS = ("persistence", "ridge")  # deterministic: one run, no sweep
+TUNED_MODELS = (*RECURRENT_MODELS, *TREE_MODELS)  # Optuna study each
+UNTRAINED_MODELS = ("persistence", "ridge")  # deterministic: one run, no tuning
 LGBM_MAX_ROUNDS = 5000
 LGBM_PATIENCE = 100  # boosting rounds without a better val RMSE
 RIDGE_ALPHAS = np.logspace(-4, 3, 50)

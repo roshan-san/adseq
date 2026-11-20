@@ -10,10 +10,13 @@ The recurrent models train on the GPU when there is one (install the CUDA build 
 """
 
 import copy
+import time
 
 import lightgbm as lgb
+import mlflow
 import numpy as np
 import torch
+from mlflow.entities import Metric
 from torch import nn
 
 from .config import Config
@@ -57,7 +60,7 @@ def predict_ridge(ds: Dataset) -> tuple[np.ndarray, dict, Curve]:
 
 
 def fit_tuned(name: str, hp: dict, ds: Dataset, cfg: Config, seed: int) -> tuple[dict, Curve]:
-    """Fit a tuned model (no test predictions): training info and learning curve, for a sweep."""
+    """Fit a tuned model (no test predictions): training info and learning curve, for tuning."""
     if name in TREE_MODELS:
         _, info, curve = fit_lgbm(name, hp, ds, seed)
     else:
@@ -208,7 +211,16 @@ def predict_recurrent(model: RecurrentNet, name: str, hp: dict, ds: Dataset) -> 
     return ds.unscale(out.astype(float) + base_level(name, ds))
 
 
-def log_curve(run, curve: Curve) -> None:
-    """Learning curve to W&B; epoch_* so it can't clash with the final metrics."""
-    for epoch, train_loss, val_rmse in curve:
-        run.log({"epoch_train_loss": train_loss, "epoch_val_rmse": val_rmse}, step=epoch)
+def log_curve(curve: Curve) -> None:
+    """Learning curve to the active MLflow run; epoch_* so it can't clash with the final
+    metrics. Sent in batches: LightGBM curves can be thousands of rounds long."""
+    t = int(time.time() * 1000)
+    metrics = [
+        Metric(key, float(v), t, epoch)
+        for epoch, train_loss, val_rmse in curve
+        for key, v in (("epoch_train_loss", train_loss), ("epoch_val_rmse", val_rmse))
+    ]
+    run_id = mlflow.active_run().info.run_id
+    client = mlflow.MlflowClient()
+    for i in range(0, len(metrics), 1000):  # MLflow's per-batch limit
+        client.log_batch(run_id, metrics=metrics[i : i + 1000])

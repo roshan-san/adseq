@@ -1,58 +1,53 @@
-"""Equal-budget hyper-parameter search with W&B Sweeps (Bayesian optimisation).
+"""Equal-budget hyper-parameter search with Optuna (TPE sampler, fixed seed).
 
-Every tuned model gets the same number of sweep runs (--n-trials), each trained with seed 0 and
-scored on the same validation samples. Every trial is a W&B run (job_type "tune"), so the whole
-search can be inspected online. The sweep id is saved in runs/<name>/sweeps/, so re-running
-continues the same sweep instead of starting a new one. Sweeps need --wandb-mode online.
+Every tuned model gets the same number of finished trials (--n-trials), each trained with seed 0
+and scored on the same validation samples. Each model's study is saved in
+runs/<name>/optuna/<model>.log, so re-running continues it: finished trials are kept, and a trial
+cut off by a crash is marked failed and run again. Run one process per model at a time.
+Every trial is also an MLflow run (tag job=tune) with its learning curve.
 
-The sweep metric `val_rmse` is in scaled units (target min-max scaled on the training period);
+The objective `val_rmse` is in scaled units (target min-max scaled on the training period);
 the `[tune]` line also prints it in ft^3/min.
 """
 
 import json
 from pathlib import Path
 
-import wandb
+import mlflow
+import optuna
+from optuna.storages import JournalStorage
+from optuna.storages.journal import JournalFileBackend
+from optuna.trial import Trial, TrialState
 
-from .config import WANDB_PROJECT, Config
+from .config import Config
 from .data import WINDOWS, Dataset
 from .models import TREE_MODELS, UNTRAINED_MODELS
 from .train import fit_tuned, log_curve
 
-LGBM_SPACE = {
-    "lr": {"distribution": "log_uniform_values", "min": 5e-3, "max": 0.2},
-    "num_leaves": {"values": [7, 15, 31, 63, 127]},
-    "min_data_in_leaf": {"values": [5, 10, 20, 50, 100]},
-    "feature_fraction": {"distribution": "uniform", "min": 0.1, "max": 1.0},
-    "bagging_fraction": {"distribution": "uniform", "min": 0.5, "max": 1.0},
-    "lambda_l2": {"distribution": "log_uniform_values", "min": 1e-8, "max": 10.0},
-    "loss": {"values": ["mse", "l1"]},
-    "window": {"values": list(WINDOWS)},
-}
 
-
-def sweep_config(cfg: Config, name: str) -> dict:
+def suggest(trial: Trial, name: str) -> dict:
     """Search space: the same ranges for every recurrent model; LightGBM's own for the trees
     (same loss and window choices)."""
-    params = (
-        LGBM_SPACE
-        if name in TREE_MODELS
-        else {
-            "lr": {"distribution": "log_uniform_values", "min": 1e-4, "max": 1e-2},
-            "weight_decay": {"distribution": "log_uniform_values", "min": 1e-7, "max": 1e-2},
-            "batch_size": {"values": [64, 128, 256]},
-            "dropout": {"distribution": "uniform", "min": 0.0, "max": 0.4},
-            "loss": {"values": ["mse", "l1"]},
-            "hidden_size": {"values": [16, 32, 64, 128]},
-            "num_layers": {"distribution": "int_uniform", "min": 1, "max": 2},
-            "window": {"values": list(WINDOWS)},
+    if name in TREE_MODELS:
+        return {
+            "lr": trial.suggest_float("lr", 5e-3, 0.2, log=True),
+            "num_leaves": trial.suggest_categorical("num_leaves", [7, 15, 31, 63, 127]),
+            "min_data_in_leaf": trial.suggest_categorical("min_data_in_leaf", [5, 10, 20, 50, 100]),
+            "feature_fraction": trial.suggest_float("feature_fraction", 0.1, 1.0),
+            "bagging_fraction": trial.suggest_float("bagging_fraction", 0.5, 1.0),
+            "lambda_l2": trial.suggest_float("lambda_l2", 1e-8, 10.0, log=True),
+            "loss": trial.suggest_categorical("loss", ["mse", "l1"]),
+            "window": trial.suggest_categorical("window", list(WINDOWS)),
         }
-    )
     return {
-        "name": f"{cfg.name}/{name}",
-        "method": "bayes",
-        "metric": {"name": "val_rmse", "goal": "minimize"},
-        "parameters": params,
+        "lr": trial.suggest_float("lr", 1e-4, 1e-2, log=True),
+        "weight_decay": trial.suggest_float("weight_decay", 1e-7, 1e-2, log=True),
+        "batch_size": trial.suggest_categorical("batch_size", [64, 128, 256]),
+        "dropout": trial.suggest_float("dropout", 0.0, 0.4),
+        "loss": trial.suggest_categorical("loss", ["mse", "l1"]),
+        "hidden_size": trial.suggest_categorical("hidden_size", [16, 32, 64, 128]),
+        "num_layers": trial.suggest_int("num_layers", 1, 2),
+        "window": trial.suggest_categorical("window", list(WINDOWS)),
     }
 
 
@@ -61,7 +56,7 @@ def hp_file(cfg: Config, name: str) -> Path:
 
 
 def load_hp(cfg: Config, name: str) -> dict:
-    """Best sweep run's hyper-parameters ({} for the untrained baselines)."""
+    """Best trial's hyper-parameters ({} for the untrained baselines)."""
     if name in UNTRAINED_MODELS:
         return {}
     path = hp_file(cfg, name)
@@ -71,55 +66,39 @@ def load_hp(cfg: Config, name: str) -> dict:
 
 
 def tune(cfg: Config, ds: Dataset, name: str) -> dict:
-    if cfg.wandb_mode != "online":
-        raise SystemExit("W&B Sweeps need --wandb-mode online (run `uv run wandb login` once).")
-    api = wandb.Api()
+    study_file = cfg.run_dir / "optuna" / f"{name}.log"
+    study_file.parent.mkdir(exist_ok=True)
+    storage = JournalStorage(JournalFileBackend(str(study_file)))
+    study = optuna.create_study(
+        study_name=name, storage=storage, direction="minimize", load_if_exists=True
+    )
+    # seed 0 for a new study, so a run without interruptions can be replayed exactly; after a
+    # resume the seed moves on, else the sampler's random first trials would repeat earlier ones
+    study.sampler = optuna.samplers.TPESampler(seed=len(study.trials))
+    # a trial still "running" was cut off by a crash (one process per model): fail it, run anew
+    for t in study.get_trials(deepcopy=False, states=(TrialState.RUNNING,)):
+        storage.set_trial_state_values(t._trial_id, TrialState.FAIL)
 
-    # one sweep per model; its id is saved so a re-run continues it
-    id_file = cfg.run_dir / "sweeps" / f"{name}.txt"
-    if id_file.exists():
-        sweep_path = id_file.read_text().strip()
-    else:
-        sweep_id = wandb.sweep(sweep_config(cfg, name), project=WANDB_PROJECT)
-        sweep_path = f"{api.default_entity}/{WANDB_PROJECT}/{sweep_id}"
-        id_file.parent.mkdir(exist_ok=True)
-        id_file.write_text(sweep_path)
-    entity, _, sweep_id = sweep_path.split("/")
-
-    done = sum(r.state == "finished" for r in api.sweep(sweep_path).runs)
-
-    def trial() -> None:
-        with wandb.init(
-            group=f"{cfg.name}-tune",
-            job_type="tune",
-            tags=[name],
-            dir=cfg.run_dir,
-        ) as run:
-            hp = dict(run.config)  # the sweep's parameters are exactly the model's hyper-parameters
+    def objective(trial: Trial) -> float:
+        hp = suggest(trial, name)
+        tags = {"job": "tune", "model": name, "trial": str(trial.number)}
+        with mlflow.start_run(run_name=f"{name}-t{trial.number}", tags=tags):
+            mlflow.log_params(hp)
             info, curve = fit_tuned(name, hp, ds, cfg, seed=0)  # no test predictions
-            log_curve(run, curve)
-            run.summary["val_rmse"] = info["val_rmse_scaled"]  # best epoch, the sweep's metric
-            run.summary.update({k: info[k] for k in ("epochs", "n_params", "device")})
+            log_curve(curve)
+            mlflow.log_metrics({k: info[k] for k in ("val_rmse_scaled", "epochs", "n_params")})
+            mlflow.set_tag("device", info["device"])
+        return info["val_rmse_scaled"]  # best epoch
 
+    done = len(study.get_trials(deepcopy=False, states=(TrialState.COMPLETE,)))
     if cfg.n_trials > done:
-        wandb.agent(
-            sweep_id,
-            function=trial,
-            entity=entity,
-            project=WANDB_PROJECT,
-            count=cfg.n_trials - done,
-        )
+        # a trial that raises stops the study with its traceback; re-run to continue
+        study.optimize(objective, n_trials=cfg.n_trials - done)
 
-    sweep = wandb.Api().sweep(sweep_path)  # fresh Api: no cached run list
-    best_run = sweep.best_run()
-    # wandb.agent swallows trial exceptions, so check that at least one trial finished
-    if best_run is None or "val_rmse" not in best_run.summary:
-        raise SystemExit(f"[tune] {name}: no trial finished; see the failed runs at {sweep.url}")
-    best = dict(best_run.config)
+    best = study.best_params
     path = hp_file(cfg, name)
     path.parent.mkdir(exist_ok=True)
     path.write_text(json.dumps(best, indent=2))
-    val = best_run.summary["val_rmse"]
+    val = study.best_value
     print(f"[tune] {name}: best val RMSE = {val * ds.y_scale:.2f} (scaled {val:.4f})  {best}")
-    print(f"       sweep: {sweep.url}")
     return best
