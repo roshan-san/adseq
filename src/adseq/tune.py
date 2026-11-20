@@ -4,7 +4,9 @@ Every tuned model gets the same number of finished trials (--n-trials, completed
 trained with seed 0 and scored on the same validation samples. Each model's study is saved in
 runs/<name>/optuna/<model>.log, so re-running continues it: finished trials are kept, and a trial
 cut off by a crash stays "running" and does not count. Run one process per model at a time.
-Every trial is an MLflow run (tags job=tune, model, trial, pruned) with its learning curve.
+Every trial is an MLflow run (tags trial, pruned) with its learning curve, nested under the
+model's tune/<model> run, which is reopened on a resume like the study and holds the best
+hyper-parameters (best_params.json) and best_val_rmse.
 
 Pruning (MedianPruner, recurrent models only): after the first PRUNE_STARTUP finished trials, a
 trial stops early when its best val RMSE so far is worse than the median of earlier trials at the
@@ -17,9 +19,6 @@ The objective `val_rmse` is in scaled units (target min-max scaled on the traini
 the `[tune]` line also prints it in ft^3/min.
 """
 
-import json
-from pathlib import Path
-
 import mlflow
 import optuna
 from optuna.storages import JournalStorage
@@ -29,8 +28,8 @@ from optuna.trial import Trial, TrialState
 from .config import Config
 from .data import WINDOWS, Dataset
 from .fit import fit
-from .models import TREE_MODELS, UNTUNED_MODELS
-from .tracking import log_info
+from .models import TREE_MODELS
+from .tracking import child_run, log_info, tune_run
 
 PRUNE_STARTUP = 5  # finished trials before any pruning (Optuna's MedianPruner default)
 # passes over the training data before a trial may be pruned: slow starters (low learning rate)
@@ -65,20 +64,6 @@ def suggest(trial: Trial, name: str) -> dict:
     }
 
 
-def hp_file(cfg: Config, name: str) -> Path:
-    return cfg.run_dir / "best_hp" / f"{name}.json"
-
-
-def load_hp(cfg: Config, name: str) -> dict:
-    """Best trial's hyper-parameters ({} for the untuned baselines, persistence and ridge)."""
-    if name in UNTUNED_MODELS:
-        return {}
-    path = hp_file(cfg, name)
-    if not path.exists():
-        raise FileNotFoundError(f"{path} missing: run `adseq tune --name {cfg.name}` first")
-    return json.loads(path.read_text())
-
-
 def open_study(cfg: Config, name: str) -> optuna.Study:
     """The model's study, new or resumed from its journal file."""
     study_file = cfg.run_dir / "optuna" / f"{name}.log"
@@ -109,8 +94,7 @@ def run_trial(trial: Trial, name: str, ds: Dataset, cfg: Config) -> float:
         pruned = trial.should_prune()
         return pruned
 
-    tags = {"job": "tune", "model": name, "trial": str(trial.number)}
-    with mlflow.start_run(run_name=f"{name}-t{trial.number}", tags=tags):
+    with child_run(f"trial-{trial.number}", trial=str(trial.number)):
         _, info = fit(name, hp, ds, cfg, seed=0, on_step=on_step)
         mlflow.log_params(hp)
         log_info(info)
@@ -121,18 +105,16 @@ def run_trial(trial: Trial, name: str, ds: Dataset, cfg: Config) -> float:
 
 
 def tune(cfg: Config, ds: Dataset, name: str) -> dict:
-    """Run the model's study up to --n-trials finished trials; save and return the best
-    hyper-parameters (runs/<name>/best_hp/<model>.json)."""
+    """Run the model's study up to --n-trials finished trials; log and return the best
+    hyper-parameters (best_params.json on tune/<model>, typed, overwritten as tuning goes on)."""
     study = open_study(cfg, name)
     remaining = cfg.n_trials - len(study.get_trials(deepcopy=False, states=FINISHED))
-    if remaining > 0:
-        # a trial that raises stops the study with its traceback; re-run to continue
-        study.optimize(lambda trial: run_trial(trial, name, ds, cfg), n_trials=remaining)
-
-    best = study.best_params
-    path = hp_file(cfg, name)
-    path.parent.mkdir(exist_ok=True)
-    path.write_text(json.dumps(best, indent=2))
-    val = study.best_value
+    with tune_run(cfg, name):
+        if remaining > 0:
+            # a trial that raises stops the study with its traceback; re-run to continue
+            study.optimize(lambda trial: run_trial(trial, name, ds, cfg), n_trials=remaining)
+        best, val = study.best_params, study.best_value
+        mlflow.log_dict(best, "best_params.json")
+        mlflow.log_metric("best_val_rmse", val)  # scaled units, as the objective
     print(f"[tune] {name}: best val RMSE = {val * ds.y_scale:.2f} (scaled {val:.4f})  {best}")
     return best

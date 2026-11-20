@@ -17,8 +17,7 @@ from .data import Dataset
 from .fit import fit, predict
 from .metrics import regression_metrics
 from .models import UNTUNED_MODELS
-from .tracking import log_info
-from .tune import load_hp
+from .tracking import best_params, log_info
 
 SPLITS = ("train", "val", "test")
 
@@ -26,7 +25,7 @@ SPLITS = ("train", "val", "test")
 def evaluate(cfg: Config, ds: Dataset, name: str) -> None:
     """Fit the model with its best hyper-parameters once per seed (once for the deterministic
     baselines); save its metrics and predictions."""
-    hp = load_hp(cfg, name)
+    hp = best_params(cfg, name)
     seeds = cfg.seeds[:1] if name in UNTUNED_MODELS else cfg.seeds
     n_inputs = 1 if name == "persistence" else ds.n_features  # for the adjusted R2
 
