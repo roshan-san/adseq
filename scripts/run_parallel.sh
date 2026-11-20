@@ -12,7 +12,7 @@
 #
 # Each recurrent model gets its own process with ONE thread: these small RNNs train faster on
 # one thread than on eight (measured 4.5 vs 8.2 s/epoch), so six single-thread processes get far
-# more done than one process using every core. LightGBM and the untrained baselines share a
+# more done than one process using every core. LightGBM and the untuned baselines share a
 # seventh process with two threads. Starts are staggered because loading the CSV peaks at ~0.9 GB
 # per process (~0.45 GB once loaded). Logs: runs/logs/<model>.log. Re-running resumes: Optuna
 # studies continue from runs/<name>/optuna/, finished trials are not repeated.

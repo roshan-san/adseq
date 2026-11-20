@@ -29,7 +29,7 @@ from optuna.trial import Trial, TrialState
 from .config import Config
 from .data import WINDOWS, Dataset
 from .fit import fit
-from .models import TREE_MODELS, UNTRAINED_MODELS
+from .models import TREE_MODELS, UNTUNED_MODELS
 from .tracking import log_run
 
 PRUNE_STARTUP = 5  # finished trials before any pruning (Optuna's MedianPruner default)
@@ -70,8 +70,8 @@ def hp_file(cfg: Config, name: str) -> Path:
 
 
 def load_hp(cfg: Config, name: str) -> dict:
-    """Best trial's hyper-parameters ({} for the untrained baselines)."""
-    if name in UNTRAINED_MODELS:
+    """Best trial's hyper-parameters ({} for the untuned baselines, persistence and ridge)."""
+    if name in UNTUNED_MODELS:
         return {}
     path = hp_file(cfg, name)
     if not path.exists():
