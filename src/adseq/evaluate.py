@@ -17,7 +17,7 @@ from .data import Dataset
 from .fit import fit, predict
 from .metrics import regression_metrics
 from .models import UNTUNED_MODELS
-from .tracking import log_run
+from .tracking import log_info
 from .tune import load_hp
 
 SPLITS = ("train", "val", "test")
@@ -34,13 +34,15 @@ def evaluate(cfg: Config, ds: Dataset, name: str) -> None:
     for seed in seeds:
         tags = {"job": "evaluate", "model": name, "seed": str(seed)}
         with mlflow.start_run(run_name=f"{name}-s{seed}", tags=tags):
-            fitted, info, curve = fit(name, hp, ds, cfg, seed)
+            fitted, info = fit(name, hp, ds, cfg, seed)
             pred = predict(fitted, name, hp, ds)
             scores = {
                 s: regression_metrics(ds.y_true[ds.part(s)], pred[ds.part(s)], n_inputs)
                 for s in SPLITS
             }
-            log_run({"seed": seed, **hp}, info, curve, scores)
+            mlflow.log_params({"seed": seed, **hp})
+            log_info(info)
+            mlflow.log_metrics({f"{s}_{k}": v for s, m in scores.items() for k, v in m.items()})
 
         preds.append(pred)
         rows += [{"model": name, "seed": seed, "split": s, **m, **info} for s, m in scores.items()]

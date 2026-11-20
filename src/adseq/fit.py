@@ -1,7 +1,9 @@
 """Fit any model, then predict every sample.
 
-fit(name, ...) -> (fitted, info, curve) and predict(fitted, name, ...) -> ft^3/min are the
-only entry points; each model family has its own section below.
+fit(name, ...) -> (fitted, info) and predict(fitted, name, ...) -> ft^3/min are the
+only entry points; each model family has its own section below. fit is always called inside an
+MLflow run (a tuning trial or an evaluation seed) and logs the learning curve into it as it
+trains (epoch_train_loss / epoch_val_rmse, scaled units), so it can be watched in the UI.
 
 Persistence has nothing to fit and ridge no training loop. Every recurrent model shares one
 procedure: AdamW (weight decay applied to the weights directly, not through the gradient), MSE
@@ -17,6 +19,7 @@ import copy
 from collections.abc import Callable
 
 import lightgbm as lgb
+import mlflow
 import numpy as np
 import torch
 from sklearn.linear_model import RidgeCV
@@ -28,6 +31,7 @@ from torch import nn
 from .config import Config
 from .data import Dataset
 from .models import TREE_MODELS, RecurrentNet, is_residual, make_model
+from .tracking import log_lgbm_curve
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # recurrent models
 CHUNK = 4096  # samples per forward pass when predicting: all ~490k windows would not fit
@@ -35,7 +39,6 @@ RIDGE_CV_GAP = 300  # their notebook: rows left out between each CV fold's train
 LGBM_MAX_ROUNDS = 5000
 LGBM_PATIENCE = 100  # boosting rounds without a better val RMSE
 
-Curve = list[tuple[int, float, float]]  # (epoch, mean train loss, val RMSE), scaled units
 # called after every epoch with (epoch, best val RMSE so far); returning True stops it (pruned)
 OnStep = Callable[[int, float], bool]
 Fitted = RecurrentNet | lgb.Booster | Pipeline | None  # None: persistence (nothing is fitted)
@@ -43,11 +46,11 @@ Fitted = RecurrentNet | lgb.Booster | Pipeline | None  # None: persistence (noth
 
 def fit(
     name: str, hp: dict, ds: Dataset, cfg: Config, seed: int, on_step: OnStep | None = None
-) -> tuple[Fitted, dict, Curve]:
-    """The fitted model, training info and learning curve. on_step (recurrent models only) can
+) -> tuple[Fitted, dict]:
+    """The fitted model and training info. on_step (recurrent models only) can
     stop the training early: Optuna pruning."""
     if name == "persistence":
-        return None, {"epochs": 0, "n_params": 0}, []
+        return None, {"epochs": 0, "n_params": 0}
     if name == "ridge":
         return fit_ridge(ds)
     if name in TREE_MODELS:
@@ -100,7 +103,7 @@ def tree_input(ds: Dataset, idx: np.ndarray, window: int) -> np.ndarray:
 # --- ridge ------------------------------------------------------------------------------------
 
 
-def fit_ridge(ds: Dataset) -> tuple[Pipeline, dict, Curve]:
+def fit_ridge(ds: Dataset) -> tuple[Pipeline, dict]:
     """Their linear model (SCADA-linear-regression.ipynb): StandardScaler + RidgeCV with its
     default penalties (0.1, 1, 10); the one with the best R2 over 5 TimeSeriesSplit folds is
     refit on all rows. Fit on every pre-test row (train + val, as theirs saw their whole training
@@ -111,13 +114,13 @@ def fit_ridge(ds: Dataset) -> tuple[Pipeline, dict, Curve]:
     model.fit(ds.X[rows].astype(float), ds.y[rows].astype(float))
     ridge = model[-1]
     info = {"epochs": 0, "alpha": float(ridge.alpha_), "n_params": ridge.coef_.size + 1}
-    return model, info, []
+    return model, info
 
 
 # --- LightGBM ---------------------------------------------------------------------------------
 
 
-def fit_lgbm(name: str, hp: dict, ds: Dataset, seed: int) -> tuple[lgb.Booster, dict, Curve]:
+def fit_lgbm(name: str, hp: dict, ds: Dataset, seed: int) -> tuple[lgb.Booster, dict]:
     """Boost on the training samples; keep the trees up to the best validation round. Not
     pruned while tuning: early stopping already ends a poor trial."""
     train, val = ds.part("train"), ds.part("val")
@@ -155,7 +158,7 @@ def fit_lgbm(name: str, hp: dict, ds: Dataset, seed: int) -> tuple[lgb.Booster, 
 
     best = booster.best_iteration
     train_loss, val_rmse = evals["train"][loss], evals["val"]["rmse"]
-    curve = [(i + 1, train_loss[i], val_rmse[i]) for i in range(len(val_rmse))]
+    log_lgbm_curve(train_loss, val_rmse)
     trees = booster.dump_model(num_iteration=best)["tree_info"]
     info = {
         "epochs": best,
@@ -163,7 +166,7 @@ def fit_lgbm(name: str, hp: dict, ds: Dataset, seed: int) -> tuple[lgb.Booster, 
         "n_params": sum(t["num_leaves"] for t in trees),  # one fitted value per leaf
         "device": "cpu",
     }
-    return booster, info, curve
+    return booster, info
 
 
 # --- recurrent --------------------------------------------------------------------------------
@@ -171,7 +174,7 @@ def fit_lgbm(name: str, hp: dict, ds: Dataset, seed: int) -> tuple[lgb.Booster, 
 
 def fit_recurrent(
     name: str, hp: dict, ds: Dataset, cfg: Config, seed: int, on_step: OnStep | None = None
-) -> tuple[RecurrentNet, dict, Curve]:
+) -> tuple[RecurrentNet, dict]:
     """Train on the training samples; return the best-validation-epoch model. After every
     epoch on_step (if given) sees the best val RMSE so far and may stop the training."""
     train, val = ds.part("train"), ds.part("val")
@@ -209,11 +212,10 @@ def fit_recurrent(
 
     # epoch 0 = untrained weights, so there is always a state to restore
     best_rmse, best_state, best_epoch = val_rmse(), copy.deepcopy(model.state_dict()), 0
-    curve = []
     for epoch in range(1, cfg.max_epochs + 1):
         train_loss = train_epoch()
         rmse = val_rmse()
-        curve.append((epoch, train_loss, rmse))
+        mlflow.log_metrics({"epoch_train_loss": train_loss, "epoch_val_rmse": rmse}, step=epoch)
         if rmse < best_rmse:
             best_rmse, best_state, best_epoch = rmse, copy.deepcopy(model.state_dict()), epoch
         if epoch - best_epoch >= cfg.patience or (on_step and on_step(epoch, best_rmse)):
@@ -226,4 +228,4 @@ def fit_recurrent(
         "n_params": sum(p.numel() for p in model.parameters()),
         "device": DEVICE.type,
     }
-    return model, info, curve
+    return model, info

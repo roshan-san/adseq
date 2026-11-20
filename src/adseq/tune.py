@@ -30,7 +30,7 @@ from .config import Config
 from .data import WINDOWS, Dataset
 from .fit import fit
 from .models import TREE_MODELS, UNTUNED_MODELS
-from .tracking import log_run
+from .tracking import log_info
 
 PRUNE_STARTUP = 5  # finished trials before any pruning (Optuna's MedianPruner default)
 # passes over the training data before a trial may be pruned: slow starters (low learning rate)
@@ -111,8 +111,9 @@ def run_trial(trial: Trial, name: str, ds: Dataset, cfg: Config) -> float:
 
     tags = {"job": "tune", "model": name, "trial": str(trial.number)}
     with mlflow.start_run(run_name=f"{name}-t{trial.number}", tags=tags):
-        _, info, curve = fit(name, hp, ds, cfg, seed=0, on_step=on_step)
-        log_run(hp, info, curve)
+        _, info = fit(name, hp, ds, cfg, seed=0, on_step=on_step)
+        mlflow.log_params(hp)
+        log_info(info)
         mlflow.set_tag("pruned", str(pruned).lower())
     if pruned:
         raise optuna.TrialPruned()
