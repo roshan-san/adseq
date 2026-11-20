@@ -8,9 +8,6 @@ __pycache__/
 runs/
 docs/
 
-# MLflow artifact dir (tracking itself is in runs/mlflow.db)
-mlruns/
-
 # downloaded data: `uv run adseq fetch`
 data/
 

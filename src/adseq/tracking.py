@@ -14,7 +14,7 @@ One experiment per --name, its artifacts in runs/mlartifacts/<name>/ (not ./mlru
 Only parents carry the kind tag, so every lookup filters on it.
 """
 
-import contextlib
+import os
 import tempfile
 import time
 from pathlib import Path
@@ -36,12 +36,16 @@ def start_tracking(cfg: Config) -> None:
     """Log to cfg.mlflow_uri, in the experiment named --name (created with its artifact folder
     on first use)."""
     Path("runs").mkdir(exist_ok=True)
+    os.environ.setdefault("MLFLOW_ENABLE_ARTIFACTS_PROGRESS_BAR", "false")  # no bars in the logs
     mlflow.set_tracking_uri(cfg.mlflow_uri)
-    if mlflow.get_experiment_by_name(cfg.name) is None:
+    try:
         artifacts = Path("runs/mlartifacts", cfg.name).resolve().as_uri()
-        # another process (scripts/run_parallel.sh) may create it first
-        with contextlib.suppress(MlflowException):
-            mlflow.create_experiment(cfg.name, artifact_location=artifacts)
+        mlflow.create_experiment(cfg.name, artifact_location=artifacts)
+    except MlflowException as e:
+        # it exists (maybe another process of scripts/run_parallel.sh made it first); any other
+        # error stops here, else set_experiment would create it with artifacts in ./mlruns
+        if e.error_code != "RESOURCE_ALREADY_EXISTS":
+            raise
     mlflow.set_experiment(cfg.name)
 
 
@@ -60,9 +64,8 @@ def log_lgbm_curve(train_loss: list[float], val_rmse: list[float]) -> None:
         metrics.append(Metric("epoch_train_loss", float(loss), t, step))
         metrics.append(Metric("epoch_val_rmse", float(rmse), t, step))
     run_id = mlflow.active_run().info.run_id
-    client = mlflow.MlflowClient()
     for i in range(0, len(metrics), BATCH_LIMIT):
-        client.log_batch(run_id, metrics=metrics[i : i + BATCH_LIMIT])
+        mlflow.MlflowClient().log_batch(run_id, metrics=metrics[i : i + BATCH_LIMIT])
 
 
 def tune_parent_id(cfg: Config, model: str) -> str | None:
@@ -77,10 +80,9 @@ def tune_parent_id(cfg: Config, model: str) -> str | None:
 
 def tune_run(cfg: Config, model: str) -> mlflow.ActiveRun:
     """Reopen the model's tune/<model> run, or start it: one per model, as its Optuna study."""
-    run_id = tune_parent_id(cfg, model)
-    if run_id is not None:
-        return mlflow.start_run(run_id=run_id)
-    return mlflow.start_run(run_name=f"tune/{model}", tags={"kind": "tune", "model": model})
+    run_id = tune_parent_id(cfg, model)  # None: start it
+    tags = {"kind": "tune", "model": model}
+    return mlflow.start_run(run_id, run_name=f"tune/{model}", tags=tags)
 
 
 def eval_run(model: str) -> mlflow.ActiveRun:
@@ -100,17 +102,14 @@ def best_params(cfg: Config, model: str) -> dict:
     baselines, persistence and ridge."""
     if model in UNTUNED_MODELS:
         return {}
-    missing = LookupError(
-        f"no tuned hyper-parameters for {model} in experiment {cfg.name}: "
-        f"run `adseq tune --name {cfg.name}` first"
-    )
     run_id = tune_parent_id(cfg, model)
-    if run_id is None:
-        raise missing
-    try:  # a tune run that crashed before its first finish has no best_params.json yet
+    try:  # fails for no tune run (runs:/None/...) or one that crashed before its first finish
         return mlflow.artifacts.load_dict(f"runs:/{run_id}/best_params.json")
-    except (MlflowException, OSError) as e:
-        raise missing from e
+    except MlflowException as e:
+        raise LookupError(
+            f"no tuned hyper-parameters for {model} in experiment {cfg.name}: "
+            f"run `adseq tune --name {cfg.name}` first"
+        ) from e
 
 
 def log_test_summary(tests: list[dict[str, float]]) -> None:

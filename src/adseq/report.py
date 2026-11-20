@@ -31,11 +31,10 @@ METRICS = ["adj_r2", "mape", "rmse", "mae", "teei", "r2"]
 def summary_table(runs: pd.DataFrame) -> pd.DataFrame:
     """Mean and std over seeds of every test metric, one row per model, in NAMES order, with
     the eval run each row comes from."""
-    cols = {"tags.model": "model"}
-    for m in METRICS:
-        cols |= {f"metrics.test_{m}_mean": f"{m}_mean", f"metrics.test_{m}_std": f"{m}_std"}
-    cols |= {"metrics.n_seeds": "n_seeds", "run_id": "run_id"}
-    s = runs[list(cols)].rename(columns=cols).astype({"n_seeds": int})
+    stats = [f"metrics.test_{m}_{stat}" for m in METRICS for stat in ("mean", "std")]
+    s = runs[["tags.model", *stats, "metrics.n_seeds", "run_id"]]
+    s = s.rename(columns=lambda c: c.split(".")[-1].removeprefix("test_"))
+    s = s.astype({"n_seeds": int})
     order = {name: i for i, name in enumerate(NAMES)}
     return s.sort_values("model", key=lambda c: c.map(order)).reset_index(drop=True)
 

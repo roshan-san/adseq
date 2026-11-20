@@ -47,8 +47,7 @@ def evaluate(cfg: Config, ds: Dataset, name: str) -> None:
                 log_info(info)
                 mlflow.log_metrics({f"{s}_{k}": v for s, m in scores.items() for k, v in m.items()})
             preds.append(pred)
-            tests.append(scores["test"])
-            t = scores["test"]
+            tests.append(t := scores["test"])
             print(f"[eval] {name:11s} seed={seed}  test RMSE={t['rmse']:.4g}  R2={t['r2']:.3f}")
         log_test_summary(tests)
         log_preds(ds, np.array(preds))
