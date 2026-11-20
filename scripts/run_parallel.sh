@@ -12,10 +12,16 @@
 #
 # Each recurrent model gets its own process with ONE thread: these small RNNs train faster on
 # one thread than on eight (measured 4.5 vs 8.2 s/epoch), so six single-thread processes get far
-# more done than one process using every core. LightGBM and the untuned baselines share a
-# seventh process with two threads. Starts are staggered because loading the CSV peaks at ~0.9 GB
-# per process (~0.45 GB once loaded). Logs: runs/logs/<model>.log. Re-running resumes: Optuna
-# studies continue from runs/<name>/optuna/, finished trials are not repeated.
+# more done than one process using every core. LightGBM is tuned in a seventh process with two
+# threads. Starts are staggered because loading the CSV peaks at ~0.9 GB per process (~0.45 GB
+# once loaded).
+#
+# LightGBM and the untuned baselines are evaluated last, alone, with every core: LightGBM's
+# evaluation trains on every minute, and its flattened windows (up to 72 h x 36 features =
+# 2,592 columns) take several GB, too much next to the six recurrent processes.
+#
+# Logs: runs/logs/<model>.log. Re-running resumes: Optuna studies continue from
+# runs/<name>/optuna/, finished trials are not repeated.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -39,11 +45,10 @@ for m in lstm_res lstm gru_res gru rnn_res rnn; do  # slowest first
   sleep 60
 done
 (export OMP_NUM_THREADS=2 MKL_NUM_THREADS=2
- adseq tune --models lgbm_res lgbm "${TUNE_FLAGS[@]}" "${FLAGS[@]}" &&
-   adseq evaluate --models lgbm_res lgbm persistence ridge "${FLAGS[@]}"
-) >"$LOGS/trees_and_baselines.log" 2>&1 &
+ adseq tune --models lgbm_res lgbm "${TUNE_FLAGS[@]}" "${FLAGS[@]}"
+) >"$LOGS/trees.log" 2>&1 &
 pids+=($!)
-echo "$(date +%H:%M) started lgbm_res lgbm persistence ridge (pid $!)"
+echo "$(date +%H:%M) started tuning lgbm_res lgbm (pid $!)"
 
 failed=0
 for p in "${pids[@]}"; do wait "$p" || failed=1; done
@@ -51,5 +56,10 @@ if [ "$failed" = 1 ]; then
   echo "$(date +%H:%M) a model failed: see $LOGS/*.log; re-run this script to resume"
   exit 1
 fi
+
+echo "$(date +%H:%M) recurrent models done; evaluating lgbm_res lgbm persistence ridge alone"
+adseq evaluate --models lgbm_res lgbm persistence ridge "${FLAGS[@]}" >>"$LOGS/trees.log" 2>&1 ||
+  { echo "$(date +%H:%M) evaluation failed: see $LOGS/trees.log"; exit 1; }
+
 echo "$(date +%H:%M) all models done; writing the report"
 adseq report "${FLAGS[@]}"

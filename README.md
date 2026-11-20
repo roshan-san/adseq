@@ -67,8 +67,10 @@ tmux new -s adseq                     # so it survives closing the terminal
 scripts/run_parallel.sh --name main   # then Ctrl-b d to detach; `tmux attach -t adseq` to return
 ```
 
-One single-threaded process per recurrent model plus one for LightGBM and the baselines, then the
-report. Logs go to `runs/logs/`; re-run the script to resume after a failure.
+One single-threaded process per recurrent model (tune, then evaluate) plus one tuning LightGBM;
+once those finish, LightGBM and the baselines are evaluated alone (their flattened windows need
+several GB), then the report. Logs go to `runs/logs/`; re-run the script to resume after a
+failure.
 
 Tuning trains and validates on every 10th minute (`--stride 10 --max-epochs 200 --patience 20`):
 neighbouring minutes are near-duplicates, so it finds the same kind of models several times

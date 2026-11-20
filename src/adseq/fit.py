@@ -4,10 +4,10 @@ fit(name, ...) -> (fitted, info, curve) and predict(fitted, name, ...) -> ft^3/m
 only entry points; each model family has its own section below.
 
 Persistence has nothing to fit and ridge no training loop. Every recurrent model shares one
-procedure: Adam, MSE or L1 loss (a tuned choice), mini-batches, gradient clipping, early
-stopping on validation RMSE; the weights from the best validation epoch are kept. LightGBM is
-boosted with the same loss choice and early stopping on the same validation RMSE (one "epoch" =
-one tree).
+procedure: AdamW (weight decay applied to the weights directly, not through the gradient), MSE
+or L1 loss (a tuned choice), mini-batches, gradient clipping, early stopping on validation RMSE;
+the weights from the best validation epoch are kept. LightGBM is boosted with the same loss
+choice and early stopping on the same validation RMSE (one "epoch" = one tree).
 
 The recurrent models train on the GPU when there is one (install the CUDA build of PyTorch with
 `uv sync --extra cu132`), else on the CPU; the code is the same. LightGBM always uses the CPU.
@@ -179,7 +179,7 @@ def fit_recurrent(
 
     torch.manual_seed(seed)  # also seeds CUDA; the weights are initialised on the CPU either way
     model = make_model(name, hp, ds.n_features).to(DEVICE)
-    opt = torch.optim.Adam(model.parameters(), lr=hp["lr"], weight_decay=hp["weight_decay"])
+    opt = torch.optim.AdamW(model.parameters(), lr=hp["lr"], weight_decay=hp["weight_decay"])
     loss_fn = nn.L1Loss() if hp["loss"] == "l1" else nn.MSELoss()
     val_chunks = chunks(val)  # the ~77k validation windows would take ~0.8 GB at once
 
