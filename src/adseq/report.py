@@ -1,6 +1,7 @@
 """runs/<name>/summary.csv and figures/: views for the paper, rebuilt from MLflow at any time."""
 
 import tempfile
+from pathlib import Path
 
 import matplotlib
 
@@ -11,7 +12,7 @@ import numpy as np
 import pandas as pd
 from mlflow.artifacts import download_artifacts
 
-from .config import RUNS, Config
+from .config import Config
 from .run import regression_metrics
 
 NAMES = {  # table / legend label of every model, in table order
@@ -28,7 +29,7 @@ NAMES = {  # table / legend label of every model, in table order
     "lstm_res": "Res-LSTM (proposed)",
 }
 METRICS = ["adj_r2", "mape", "rmse", "mae", "teei", "r2"]
-SJ_PREDS = RUNS / "schroer_repro" / "schroer_mlp_test.csv"  # from scripts/run_schroer.py
+SJ_PREDS = Path("data/processed/schroer_mlp_test.csv")  # from prepare_data.py
 SJ_INPUTS = 36  # inputs of their MLP, for its adjusted R2
 
 
@@ -56,7 +57,7 @@ def load_sj_mlp(ours: dict) -> np.ndarray | None:
     """Their MLP's test predictions, checked against our test minutes and labels (ours: any eval
     run's preds)."""
     if not SJ_PREDS.exists():
-        print(f"[report] sj_mlp: {SJ_PREDS} missing, left out (run scripts/run_schroer.py)")
+        print(f"[report] sj_mlp: {SJ_PREDS} missing, left out (run `uv run prepare_data.py`)")
         return None
     sj = pd.read_csv(SJ_PREDS, index_col=0, parse_dates=True)
     te = ours["split"] == "test"

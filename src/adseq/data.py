@@ -1,4 +1,4 @@
-"""Schroer & Just's processed SCADA data (scripts/run_schroer.py; 491,761 minutes, target =
+"""Schroer & Just's processed SCADA data (prepare_data.py; 491,761 minutes, target =
 mean biogas flow over the next 24 h) with the 36 inputs of their final MLP, split and windowed:
 test = their last 20 %; val = the last VAL_FRAC of their training rows; the 24 h before val and
 before test are dropped, so no training label overlaps a later period. Scalers fit on train only.
@@ -26,7 +26,7 @@ CHUNK = 4096  # samples per forward pass when predicting: all ~490k windows woul
 
 def load_processed() -> pd.DataFrame:
     if not PROCESSED.exists():
-        raise FileNotFoundError(f"{PROCESSED} missing: run scripts/run_schroer.py (docstring)")
+        raise FileNotFoundError(f"{PROCESSED} missing: run `uv run prepare_data.py`")
     return pd.read_csv(PROCESSED, index_col=0, parse_dates=True).drop(columns=MLP_DROPS)
 
 

@@ -17,15 +17,15 @@ A plain `uv sync` without an extra removes torch.
 
 ## Data
 
-One script downloads the raw SCADA data (85 MB, `data/raw/`) and Schroer & Just's code
-(`reference/schroer2024/`), then runs their notebooks, unmodified, to build the processed data
-set (`data/processed/SCADA-FINAL.csv`) and reproduce their MLP's test predictions. Their code
-needs an environment from its time, so it runs outside the project environment:
-
 ```bash
-uv run --no-project --with "pandas==2.1.4" --with "numpy<2" --with "scikit-learn==1.3.2" \
-    --with matplotlib --with seaborn --with statsmodels python scripts/run_schroer.py
+uv run prepare_data.py
 ```
+
+Once, before anything else. It downloads the raw SCADA data (85 MB, `data/raw/`) and Schroer &
+Just's code (`reference/schroer2024/`), runs their notebooks unmodified to build the data every
+model trains on (`data/processed/SCADA-FINAL.csv`), and reproduces their MLP's test predictions
+(`data/processed/schroer_mlp_test.csv`). Steps already done are skipped. Their code needs an
+environment from its time; the file declares it, and uv builds it.
 
 ## Run
 
@@ -81,8 +81,7 @@ eval/<model>        test_<metric>_mean / _std over seeds, n_seeds, preds.npz (ev
 
 `evaluate` makes a new `eval/<model>` run each time; the report uses the newest finished one per
 model (a crashed evaluation is never used). The report adds Schroer & Just's MLP from
-`runs/schroer_repro/schroer_mlp_test.csv` (written by `scripts/run_schroer.py`), scored on the
-same test minutes.
+`data/processed/schroer_mlp_test.csv` (from `prepare_data.py`), scored on the same test minutes.
 
 What stays in `runs/<name>/`:
 
