@@ -1,7 +1,4 @@
-"""Results: summary table and test figure, from the newest FINISHED eval/<model> MLflow run of
-each model plus Schroer & Just's own MLP (its test predictions from scripts/run_schroer.py). runs/<name>/summary.csv and figures/ are views
-for the paper, regenerated from MLflow at any time; summary.csv names each row's run_id.
-"""
+"""runs/<name>/summary.csv and figures/: views for the paper, rebuilt from MLflow at any time."""
 
 import tempfile
 
@@ -36,7 +33,6 @@ SJ_INPUTS = 36  # inputs of their MLP, for its adjusted R2
 
 
 def load_preds(run_id: str) -> dict:
-    """An eval run's preds.npz: dates, split, y_true, preds (seeds x samples)."""
     with tempfile.TemporaryDirectory() as d:
         path = download_artifacts(run_id=run_id, artifact_path="preds.npz", dst_path=d)
         with np.load(path) as f:
@@ -44,8 +40,7 @@ def load_preds(run_id: str) -> dict:
 
 
 def latest_evals(cfg: Config) -> pd.DataFrame:
-    """The newest FINISHED eval/<model> run of each model, with a model column: what the report
-    shows."""
+    """The newest FINISHED eval/<model> run of each model."""
     runs = mlflow.search_runs(
         experiment_names=[cfg.name],
         filter_string="tags.mlflow.runName LIKE 'eval/%' AND attributes.status = 'FINISHED'",
@@ -58,8 +53,8 @@ def latest_evals(cfg: Config) -> pd.DataFrame:
 
 
 def load_sj_mlp(ours: dict) -> np.ndarray | None:
-    """Schroer & Just's MLP test predictions, after checking they're for our test minutes and
-    labels (ours: any eval run's preds); None if scripts/run_schroer.py hasn't been run."""
+    """Their MLP's test predictions, checked against our test minutes and labels (ours: any eval
+    run's preds)."""
     if not SJ_PREDS.exists():
         print(f"[report] sj_mlp: {SJ_PREDS} missing, left out (run scripts/run_schroer.py)")
         return None
@@ -72,8 +67,7 @@ def load_sj_mlp(ours: dict) -> np.ndarray | None:
 
 
 def summary_table(runs: pd.DataFrame, extra: list[dict]) -> pd.DataFrame:
-    """Mean and std over seeds of every test metric, one row per model, in NAMES order, with
-    the eval run each row comes from; extra: rows already in that shape (their MLP)."""
+    """One row per model, in NAMES order; extra: rows already in that shape (their MLP)."""
     stats = [f"metrics.test_{m}_{stat}" for m in METRICS for stat in ("mean", "std")]
     cols = ["model", *stats, "metrics.n_seeds", "run_id"]
     s = runs.filter(items=cols).rename(
@@ -85,8 +79,7 @@ def summary_table(runs: pd.DataFrame, extra: list[dict]) -> pd.DataFrame:
 
 
 def plot_test_predictions(cfg: Config, ours: dict, curves: dict[str, np.ndarray]) -> None:
-    """Measured vs. predicted over the test period (single-column figure). ours: an eval run's
-    preds, for the test minutes and labels; curves: model -> its test predictions."""
+    """Measured vs. predicted over the test period, single-column. curves: model -> test preds."""
     plt.rcParams.update({"font.family": "serif", "font.size": 8, "pdf.fonttype": 42})
     fig, ax = plt.subplots(figsize=(3.5, 2.2))
     te = ours["split"] == "test"
@@ -105,7 +98,6 @@ def plot_test_predictions(cfg: Config, ours: dict, curves: dict[str, np.ndarray]
 
 
 def make_report(cfg: Config) -> None:
-    """Table and figure: Schroer & Just's MLP vs. Res-GRU (the figure), and every model."""
     runs = latest_evals(cfg)
     if runs.empty:
         raise SystemExit(

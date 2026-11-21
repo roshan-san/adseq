@@ -1,27 +1,7 @@
-"""The models, and fit / predict / space for any of them, by name.
-
-persistence   next-24-h mean = mean of the previous clock hour (Schroer & Just's baseline)
-ridge         linear model on the 36 features of minute t, as in Schroer & Just's linear
-              notebook: standardised, penalty chosen by TimeSeriesSplit CV on train + val
-lgbm          LightGBM on the same window the recurrent models see, flattened (one column per
-              hour and feature)
-lgbm_res      LightGBM predicting the change from persistence (ablation: does the gain come from
-              the residual target or from the recurrent network?)
-rnn/gru/lstm  recurrent network over the last L hours -> its last hidden state -> one number
-*_res         proposed: the same network, but it predicts the *change* from persistence, which
-              is then added back, so it only has to learn a correction
-
-fit is always called inside an MLflow run (a tuning trial or an evaluation seed), which gets the
-learning curve: logged by the recurrent loop after every epoch (epoch_train_loss /
-epoch_val_rmse, scaled units), and by mlflow.lightgbm.autolog for LightGBM.
-
-Every recurrent model shares one procedure: AdamW (weight decay applied to the weights directly,
-not through the gradient), MSE or L1 loss (a tuned choice), mini-batches, gradient clipping,
-early stopping on validation RMSE; the weights from the best validation epoch are kept. They
-train on the GPU when there is one (`uv sync --extra cu132`), else on the CPU. LightGBM is
-boosted with the same loss choice and early stopping on the same validation RMSE (one "epoch" =
-one tree), always on the CPU.
-"""
+"""The models, by name: persistence and ridge (Schroer & Just's baselines), LightGBM on the
+flattened window, and rnn / gru / lstm over the last L hours. *_res models predict the change
+from persistence, which is then added back (the proposed Res-RNN / GRU / LSTM; lgbm_res is the
+ablation: residual target without the recurrent network)."""
 
 import copy
 from collections.abc import Callable
@@ -40,33 +20,20 @@ from torch import nn
 from .config import ModelName, Training
 from .data import WINDOWS, Dataset, chunks
 
-# --- baselines -----------------------------------------------------------------------------
+# --- ridge ---------------------------------------------------------------------------------
 
 RIDGE_CV_GAP = 300  # their notebook: rows left out between each CV fold's train and val rows
 
 
 def fit_ridge(ds: Dataset) -> tuple[Pipeline, dict]:
-    """Their linear model (SCADA-linear-regression.ipynb): StandardScaler + RidgeCV with its
-    default penalties (0.1, 1, 10); the one with the best R2 over 5 TimeSeriesSplit folds is
-    refit on all rows. Fit on every pre-test row (train + val, as theirs saw their whole training
-    set), so no val split is needed; every minute, whatever the stride. float64, as the lag
-    features are collinear."""
+    """As their SCADA-linear-regression notebook: RidgeCV over 5 TimeSeriesSplit folds, on every
+    pre-test minute (they used their whole training set). float64: the lag features are collinear."""
     rows = np.flatnonzero(ds.split != "test")
     model = make_pipeline(StandardScaler(), RidgeCV(cv=TimeSeriesSplit(gap=RIDGE_CV_GAP)))
     model.fit(ds.X[rows].astype(float), ds.y[rows].astype(float))
     ridge = model.named_steps["ridgecv"]
     info = {"epochs": 0, "alpha": float(ridge.alpha_), "n_params": ridge.coef_.size + 1}
     return model, info
-
-
-def predict_ridge(model: Pipeline, ds: Dataset) -> np.ndarray:
-    """Predictions (ft^3/min) for every sample."""
-    return ds.unscale(np.asarray(model.predict(ds.X.astype(float))))
-
-
-def predict_persistence(ds: Dataset) -> np.ndarray:
-    """The mean of the previous clock hour (ft^3/min), for every sample."""
-    return ds.y_prev
 
 
 # --- LightGBM ------------------------------------------------------------------------------
@@ -76,8 +43,6 @@ LGBM_PATIENCE = 100  # boosting rounds without a better val RMSE
 
 
 def space_lgbm(trial: Trial) -> dict:
-    """Search space: LightGBM's own, with the same loss and window choices as the recurrent
-    models."""
     return {
         "lr": trial.suggest_float("lr", 5e-3, 0.2, log=True),
         "num_leaves": trial.suggest_categorical("num_leaves", [7, 15, 31, 63, 127]),
@@ -91,14 +56,13 @@ def space_lgbm(trial: Trial) -> dict:
 
 
 def tree_input(ds: Dataset, idx: np.ndarray, window: int) -> np.ndarray:
-    """(len(idx), L * F): the recurrent models' windows flattened, one column per (hour,
-    feature)."""
+    """The recurrent models' windows, flattened: one column per (hour, feature)."""
     return ds.windows(idx, window).reshape(len(idx), -1)
 
 
 def fit_lgbm(residual: bool, hp: dict, ds: Dataset, seed: int) -> tuple[lgb.Booster, dict]:
-    """Boost on the training samples; keep the trees up to the best validation round. Not
-    pruned while tuning: early stopping already ends a poor trial."""
+    """Not pruned while tuning: early stopping already ends a poor trial. mlflow.lightgbm.autolog
+    logs its learning curve."""
     train, val = ds.part("train"), ds.part("val")
     y = ds.y - ds.base_level(residual)
     loss = "l1" if hp["loss"] == "l1" else "l2"
@@ -133,11 +97,10 @@ def fit_lgbm(residual: bool, hp: dict, ds: Dataset, seed: int) -> tuple[lgb.Boos
     )
 
     best = booster.best_iteration
-    val_rmse = evals["val"]["rmse"]
     trees = booster.dump_model(num_iteration=best)["tree_info"]
     info = {
         "epochs": best,
-        "val_rmse_scaled": val_rmse[best - 1],
+        "val_rmse_scaled": evals["val"]["rmse"][best - 1],
         "n_params": sum(t["num_leaves"] for t in trees),  # one fitted value per leaf
         "device": "cpu",
     }
@@ -145,7 +108,6 @@ def fit_lgbm(residual: bool, hp: dict, ds: Dataset, seed: int) -> tuple[lgb.Boos
 
 
 def predict_lgbm(booster: lgb.Booster, residual: bool, hp: dict, ds: Dataset) -> np.ndarray:
-    """Predictions (ft^3/min) for every sample, CHUNK samples at a time."""
     out = np.concatenate(
         [
             np.asarray(
@@ -162,39 +124,36 @@ def predict_lgbm(booster: lgb.Booster, residual: bool, hp: dict, ds: Dataset) ->
 # --- recurrent -----------------------------------------------------------------------------
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-CELLS = {"rnn": nn.RNN, "gru": nn.GRU, "lstm": nn.LSTM}  # cell name -> torch layer
+CELLS = {"rnn": nn.RNN, "gru": nn.GRU, "lstm": nn.LSTM}
 
 # called after every epoch with (epoch, best val RMSE so far); returning True stops it (pruned)
 OnStep = Callable[[int, float], bool]
 
 
 class RecurrentNet(nn.Module):
-    """Reads a (batch, L, F) window hour by hour, oldest first; its hidden state after the
-    last hour goes through dropout and a linear head to one number per window."""
+    """A (batch, L, F) window, oldest hour first -> the last hidden state -> one number."""
 
     def __init__(self, cell: str, n_in: int, hidden_size: int, num_layers: int, dropout: float):
         super().__init__()
+        # torch's dropout only acts between stacked layers, so 1 layer must get 0
         self.rnn = CELLS[cell](
             n_in,
             hidden_size,
             num_layers,
-            batch_first=True,  # input is (batch, L, F), not (L, batch, F)
-            # torch applies this dropout only between stacked layers, so 1 layer must get 0
+            batch_first=True,
             dropout=dropout if num_layers > 1 else 0.0,
         )
-        self.dropout = nn.Dropout(dropout)  # before the head: applies for any number of layers
+        self.dropout = nn.Dropout(dropout)  # before the head, for any number of layers
         self.head = nn.Linear(hidden_size, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        out, _ = self.rnn(x)  # (batch, L, hidden): the hidden state after each hour
-        return self.head(self.dropout(out[:, -1])).squeeze(-1)  # last hour only -> (batch,)
+        out, _ = self.rnn(x)
+        return self.head(self.dropout(out[:, -1])).squeeze(-1)
 
 
 def make_model(cell: str, residual: bool, hp: dict, n_features: int) -> RecurrentNet:
-    """The network: "gru" and "gru_res" are the same GRU network, they differ only in what they
-    are trained to predict (Dataset.base_level). A residual model's head starts at zero, so the
-    untrained model predicts exactly persistence; the head learns from the first step and the
-    rest of the network from the second."""
+    """A residual model's head starts at zero, so the untrained model predicts exactly
+    persistence."""
     model = RecurrentNet(cell, n_features, hp["hidden_size"], hp["num_layers"], hp["dropout"])
     if residual:
         nn.init.zeros_(model.head.weight)
@@ -203,7 +162,6 @@ def make_model(cell: str, residual: bool, hp: dict, n_features: int) -> Recurren
 
 
 def space_recurrent(trial: Trial) -> dict:
-    """Search space: the same ranges for every recurrent model."""
     return {
         "lr": trial.suggest_float("lr", 1e-4, 1e-2, log=True),
         "weight_decay": trial.suggest_float("weight_decay", 1e-7, 1e-2, log=True),
@@ -217,7 +175,6 @@ def space_recurrent(trial: Trial) -> dict:
 
 
 def net_input(ds: Dataset, idx: np.ndarray, window: int) -> torch.Tensor:
-    """(len(idx), L, F) windows on DEVICE: a recurrent model's input."""
     return torch.from_numpy(ds.windows(idx, window)).to(DEVICE)
 
 
@@ -230,12 +187,12 @@ def fit_recurrent(
     seed: int,
     on_step: OnStep | None,
 ) -> tuple[RecurrentNet, dict]:
-    """Train on the training samples; return the best-validation-epoch model. After every
-    epoch on_step (if given) sees the best val RMSE so far and may stop the training."""
+    """AdamW, gradient clipping, early stopping on val RMSE; keeps the best epoch's weights.
+    Logs the learning curve (scaled units) to the active MLflow run after every epoch."""
     train_idx, val_idx = ds.part("train"), ds.part("val")
     y = torch.from_numpy((ds.y - ds.base_level(residual)).astype(np.float32))
 
-    torch.manual_seed(seed)  # also seeds CUDA; the weights are initialised on the CPU either way
+    torch.manual_seed(seed)  # also seeds CUDA
     model = make_model(cell, residual, hp, ds.n_features).to(DEVICE)
     opt = torch.optim.AdamW(model.parameters(), lr=hp["lr"], weight_decay=hp["weight_decay"])
     loss_fn = nn.L1Loss() if hp["loss"] == "l1" else nn.MSELoss()
@@ -251,7 +208,6 @@ def fit_recurrent(
         return (sq / len(val_idx)) ** 0.5
 
     def train_epoch() -> float:
-        """One pass over the shuffled training samples; the mean training loss."""
         model.train()
         order = train_idx[torch.randperm(len(train_idx)).numpy()]
         loss_sum = 0.0
@@ -287,7 +243,6 @@ def fit_recurrent(
 
 
 def predict_recurrent(net: RecurrentNet, residual: bool, hp: dict, ds: Dataset) -> np.ndarray:
-    """Predictions (ft^3/min) for every sample, CHUNK samples at a time."""
     net.eval()
     with torch.no_grad():
         out = np.concatenate(
@@ -299,7 +254,7 @@ def predict_recurrent(net: RecurrentNet, residual: bool, hp: dict, ds: Dataset) 
     return ds.unscale(out + ds.base_level(residual))
 
 
-# --- dispatch ------------------------------------------------------------------------------
+# --- any model, by name --------------------------------------------------------------------
 
 Fitted = RecurrentNet | lgb.Booster | Pipeline | None  # None: persistence (nothing is fitted)
 
@@ -312,9 +267,8 @@ def fit(
     seed: int,
     on_step: OnStep | None = None,
 ) -> tuple[Fitted, dict]:
-    """The fitted model and training info. on_step (recurrent models only) can stop the
-    training early: Optuna pruning."""
-    residual = name.endswith("_res")  # predicts the change from persistence
+    """on_step (recurrent models only) can stop the training early: Optuna pruning."""
+    residual = name.endswith("_res")
     if name == "persistence":
         return None, {"epochs": 0, "n_params": 0}
     if name == "ridge":
@@ -325,17 +279,16 @@ def fit(
 
 
 def predict(fitted: Fitted, name: ModelName, hp: dict, ds: Dataset) -> np.ndarray:
-    """Predictions (ft^3/min) for every sample."""
+    """ft^3/min, for every sample."""
     residual = name.endswith("_res")
     if fitted is None:
-        return predict_persistence(ds)
+        return ds.y_prev
     if isinstance(fitted, Pipeline):
-        return predict_ridge(fitted, ds)
+        return ds.unscale(np.asarray(fitted.predict(ds.X.astype(float))))
     if isinstance(fitted, lgb.Booster):
         return predict_lgbm(fitted, residual, hp, ds)
     return predict_recurrent(fitted, residual, hp, ds)
 
 
 def space(trial: Trial, name: ModelName) -> dict:
-    """The model's hyper-parameter search space."""
     return space_lgbm(trial) if name.startswith("lgbm") else space_recurrent(trial)

@@ -1,20 +1,8 @@
-"""Data: Schroer & Just's own processed SCADA data set, then splits and windows for our models.
-
-Step 1, theirs: scripts/run_schroer.py runs their notebooks unmodified (doi:10.5281/zenodo.8360096)
-on SCADA-raw.csv (Muscatine, IA WRRF, doi:10.25820/data.006715) ->
-data/processed/SCADA-FINAL.csv: 491,761 minute rows, target "Forecast" = mean biogas
-flow over the next 24 h (ft^3/min). We use the 36 inputs of their final MLP.
-
-Step 2, ours:
-  - test = their test set: the last 20 % of rows, every row scored (98,353 minutes)
-  - validation = the last VAL_FRAC of their training rows; the 24 h before validation and
-    before test are dropped from train / val, so no training label overlaps a later period
-  - min-max scalers fit on training rows only
-  - every minute of train / val / test is a sample (except the first MAX_WINDOW - 1 hours,
-    which lack a full window)
-  - each sample minute t gets a window of the features at t, t-60 min, ..., t-(L-1)*60 min
-  - the windowed models train and validate on every `stride`-th minute only (neighbouring
-    minutes are near-duplicates); test is always scored on every minute
+"""Schroer & Just's processed SCADA data (scripts/run_schroer.py; 491,761 minutes, target =
+mean biogas flow over the next 24 h) with the 36 inputs of their final MLP, split and windowed:
+test = their last 20 %; val = the last VAL_FRAC of their training rows; the 24 h before val and
+before test are dropped, so no training label overlaps a later period. Scalers fit on train only.
+Each sample minute t gets the features at t, t-60 min, ..., t-(L-1)*60 min.
 """
 
 from dataclasses import dataclass, field
@@ -37,15 +25,13 @@ CHUNK = 4096  # samples per forward pass when predicting: all ~490k windows woul
 
 
 def load_processed() -> pd.DataFrame:
-    """Their model-ready data set, with the inputs of their final MLP."""
     if not PROCESSED.exists():
         raise FileNotFoundError(f"{PROCESSED} missing: run scripts/run_schroer.py (docstring)")
     return pd.read_csv(PROCESSED, index_col=0, parse_dates=True).drop(columns=MLP_DROPS)
 
 
 def time_split(dates: pd.DatetimeIndex) -> np.ndarray:
-    """Their 80/20 test split (sklearn train_test_split, shuffle=False), our val split of the
-    training rows the same way, and 24-h "gap" rows before val and before test."""
+    """train / val / test / gap per row: their 80/20 split (train_test_split, no shuffle)."""
     rows = np.arange(len(dates))
     train_rows, test_rows = train_test_split(rows, test_size=0.2, shuffle=False)
     train_rows, val_rows = train_test_split(train_rows, test_size=VAL_FRAC, shuffle=False)
@@ -82,7 +68,7 @@ class Dataset:
 
     @property
     def X(self) -> np.ndarray:
-        """(N, F) features of minute t -> ridge."""
+        """(N, F) features of minute t: ridge's input."""
         return self.grid[self.pos]
 
     def windows(self, idx: np.ndarray, window: int) -> np.ndarray:
@@ -93,29 +79,24 @@ class Dataset:
         return self.grid[self.pos[idx, None] - lags]
 
     def part(self, name: str) -> np.ndarray:
-        """Sample indices of one split. Train and val are thinned to every `stride`-th minute;
-        test always keeps every minute."""
+        """Train and val keep every stride-th minute (neighbours are near-duplicates); test all."""
         rows = self.split == name
         if name != "test":
             rows &= self.pos % self.stride == 0
         return np.flatnonzero(rows)
 
     def base_level(self, residual: bool) -> np.ndarray:
-        """What a model's output is added to (scaled units): persistence for the residual models,
-        zero for the others."""
+        """What a model's output is added to: persistence for the residual models, else 0."""
         return self.scale(self.y_prev) if residual else np.zeros_like(self.y)
 
     def scale(self, y: np.ndarray) -> np.ndarray:
-        """ft^3/min -> the scaled units the models are trained in."""
         return (y - self.y_offset) / self.y_scale
 
     def unscale(self, y_scaled: np.ndarray) -> np.ndarray:
-        """Scaled units -> ft^3/min."""
         return y_scaled * self.y_scale + self.y_offset
 
 
 def chunks(idx: np.ndarray) -> list[np.ndarray]:
-    """idx in pieces of about CHUNK samples."""
     return np.array_split(idx, max(1, len(idx) // CHUNK))
 
 

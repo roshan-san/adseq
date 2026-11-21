@@ -1,36 +1,9 @@
-"""The two jobs, run one after the other for each model: tune, then evaluate.
+"""The two jobs, one after the other for each model: tune (Optuna, the same trial budget for
+every model, resumable from runs/<name>/optuna/<model>.log), then evaluate with every seed.
 
-Tuning: an equal-budget hyper-parameter search with Optuna (TPE sampler, fixed seed). Every tuned
-model gets the same number of finished trials (--n-trials, completed or pruned), each trained
-with seed 0 and scored on the same validation samples. Each model's study is saved in
-runs/<name>/optuna/<model>.log, so re-running continues it: finished trials are kept, and a trial
-cut off by a crash stays "running" and does not count. Run one process per model at a time.
-
-Pruning (MedianPruner, recurrent models only): after the first PRUNE_STARTUP finished trials, a
-trial stops early when its best val RMSE so far is worse than the median of earlier trials at the
-same epoch, checked every epoch once it has made PRUNE_WARMUP_PASSES passes over the training data
-(that many epochs x TUNE.stride, so the warmup is the same amount of training at any stride).
-Its curve up to that point is kept; it never becomes the best trial. LightGBM trials are not
-pruned: early stopping already ends a poor one. The objective `val_rmse` is in scaled units
-(target min-max scaled on the training period); the `[tune]` line also prints it in ft^3/min.
-
-Evaluation: each model is trained with every seed using its best hyper-parameters (once for the
-deterministic baselines) and scored on every split.
-
-MLflow is the only store of results; one experiment per --name, artifacts in MLflow's default
-./mlruns/:
-
-  tune/<model>     best_val_rmse (scaled); artifact best_params.json. A new one per
-                   `adseq run`: the Optuna study carries the trials across resumes, and
-                   evaluate uses the newest FINISHED one.
-    trial-<n>      tags trial, pruned; params = hyper-parameters; learning curve; fit info
-  eval/<model>     a new one per `adseq run`; the report uses the newest FINISHED one per
-                   model. test_<metric>_mean / _std, n_seeds; artifact preds.npz (dates, split,
-                   y_true, preds: seeds x samples)
-    seed-<s>       params = seed + hyper-parameters; learning curve; fit info;
-                   <split>_<metric> for train / val / test
-
-Every lookup is by run name.
+MLflow, one experiment per --name (lookups by run name, FINISHED runs only, newest first):
+  tune/<model>   best_params.json, best_val_rmse;    trial-<n> children: hp, curve, fit info
+  eval/<model>   test_<metric>_mean/_std, preds.npz; seed-<s> children: hp, curve, every split
 """
 
 import tempfile
@@ -59,13 +32,13 @@ from .models import fit, predict, space
 
 
 def log_info(info: dict) -> None:
-    """Training info to the active run: numbers as metrics, strings (the device) as tags."""
+    """Numbers as metrics, strings (the device) as tags."""
     mlflow.log_metrics({k: v for k, v in info.items() if not isinstance(v, str)})
     mlflow.set_tags({k: v for k, v in info.items() if isinstance(v, str)})
 
 
 def finished_runs(cfg: Config, run_name: str) -> pd.DataFrame:
-    """The FINISHED runs named run_name, newest first: a crashed run is never used."""
+    """Newest first; a crashed run is never used."""
     return mlflow.search_runs(
         experiment_names=[cfg.name],
         filter_string=f"tags.mlflow.runName = '{run_name}' AND attributes.status = 'FINISHED'",
@@ -73,24 +46,12 @@ def finished_runs(cfg: Config, run_name: str) -> pd.DataFrame:
     )
 
 
-def tune_run(model: str) -> mlflow.ActiveRun:
-    return mlflow.start_run(run_name=f"tune/{model}")
-
-
-def eval_run(model: str) -> mlflow.ActiveRun:
-    """It ends FINISHED only if every seed did, so a crashed evaluation is never reported."""
-    return mlflow.start_run(run_name=f"eval/{model}")
-
-
 def child_run(name: str, **tags: str) -> mlflow.ActiveRun:
-    """A trial or seed run under the active parent."""
     return mlflow.start_run(run_name=name, nested=True, tags=tags)
 
 
 def best_params(cfg: Config, model: ModelName) -> dict:
-    """The best trial's hyper-parameters, from tune/<model>'s best_params.json (an artifact, not
-    params: params can't change, the best trial does when tuning goes on). {} for the untuned
-    baselines, persistence and ridge."""
+    """An artifact, not params: they would come back as strings."""
     if model in UNTUNED:
         return {}
     runs = finished_runs(cfg, f"tune/{model}")
@@ -103,8 +64,7 @@ def best_params(cfg: Config, model: ModelName) -> dict:
 
 
 def log_test_summary(tests: list[dict[str, float]]) -> None:
-    """Mean and std over seeds of each test metric to the active (eval) run, as
-    test_<metric>_mean / _std, and n_seeds. Sample std (NaN for one seed)."""
+    """Mean and sample std over seeds (NaN for one seed)."""
     df = pd.DataFrame(tests)
     mean = {f"test_{m}_mean": float(v) for m, v in df.mean().items()}
     std = {f"test_{m}_std": float(v) for m, v in df.std().items()}
@@ -112,8 +72,7 @@ def log_test_summary(tests: list[dict[str, float]]) -> None:
 
 
 def log_preds(ds: Dataset, preds: np.ndarray) -> None:
-    """Every seed's predictions (seeds x samples, ft^3/min) to the active (eval) run as
-    preds.npz, with the sample dates, splits and labels, so the figure needs nothing else."""
+    """Every seed's predictions with the dates, splits and labels: the report needs nothing else."""
     with tempfile.TemporaryDirectory() as d:
         path = Path(d, "preds.npz")
         np.savez_compressed(
@@ -130,8 +89,7 @@ def log_preds(ds: Dataset, preds: np.ndarray) -> None:
 
 
 def regression_metrics(y: np.ndarray, p: np.ndarray, k: int = 1) -> dict[str, float]:
-    """scikit-learn's RMSE, MAE, MAPE and R2, plus the adjusted R2 (k = number of input features
-    per sample) and Schroer & Just's TeEI, which no library has."""
+    """Schroer & Just's metrics; k = input features, for the adjusted R2."""
     n = len(y)
     rmse = float(root_mean_squared_error(y, p))
     mape = float(mean_absolute_percentage_error(y, p))  # a fraction
@@ -151,14 +109,13 @@ def regression_metrics(y: np.ndarray, p: np.ndarray, k: int = 1) -> dict[str, fl
 # --- tuning -------------------------------------------------------------------------------------
 
 PRUNE_STARTUP = 5  # finished trials before any pruning (Optuna's MedianPruner default)
-# passes over the training data before a trial may be pruned: slow starters (low learning rate)
-# need it; the tuned gru_res is still 5.8 % above its final val RMSE after 2 passes, 1.9 % after 3
+# passes over the training data before a recurrent trial may be pruned: slow starters need them
+# (the tuned gru_res is still 5.8 % above its final val RMSE after 2 passes, 1.9 % after 3)
 PRUNE_WARMUP_PASSES = 3
 FINISHED = (TrialState.COMPLETE, TrialState.PRUNED)  # what counts towards --n-trials
 
 
 def open_study(cfg: Config, name: ModelName) -> optuna.Study:
-    """The model's study, new or resumed from its journal file."""
     study_file = cfg.run_dir / "optuna" / f"{name}.log"
     study_file.parent.mkdir(exist_ok=True)
     study = optuna.create_study(
@@ -170,14 +127,14 @@ def open_study(cfg: Config, name: ModelName) -> optuna.Study:
             n_startup_trials=PRUNE_STARTUP, n_warmup_steps=PRUNE_WARMUP_PASSES * TUNE.stride
         ),
     )
-    # seed 0 for a new study, so a run without interruptions can be replayed exactly; after a
-    # resume the seed moves on, else the sampler's random first trials would repeat earlier ones
+    # seed 0 replays an uninterrupted run exactly; after a resume the seed moves on, else the
+    # sampler's random first trials would repeat earlier ones
     study.sampler = optuna.samplers.TPESampler(seed=len(study.trials))
     return study
 
 
 def run_trial(trial: Trial, name: ModelName, ds: Dataset, cfg: Config) -> float:
-    """Train one suggested configuration; its best val RMSE (or TrialPruned)."""
+    """Its best val RMSE (scaled), or TrialPruned."""
     hp = space(trial, name)
     pruned = False
 
@@ -198,11 +155,10 @@ def run_trial(trial: Trial, name: ModelName, ds: Dataset, cfg: Config) -> float:
 
 
 def tune(cfg: Config, ds: Dataset, name: ModelName) -> dict:
-    """Run the model's study up to --n-trials finished trials; log and return the best
-    hyper-parameters (best_params.json on tune/<model>, typed, overwritten as tuning goes on)."""
+    """Up to --n-trials finished trials (completed or pruned), seed 0 each."""
     study = open_study(cfg, name)
     remaining = cfg.n_trials - len(study.get_trials(deepcopy=False, states=FINISHED))
-    with tune_run(name):
+    with mlflow.start_run(run_name=f"tune/{name}"):
         if remaining > 0:
             # a trial that raises stops the study with its traceback; re-run to continue
             study.optimize(lambda trial: run_trial(trial, name, ds, cfg), n_trials=remaining)
@@ -219,14 +175,14 @@ SPLITS = ("train", "val", "test")
 
 
 def evaluate(cfg: Config, ds: Dataset, name: ModelName) -> None:
-    """Fit the model with its best hyper-parameters once per seed (once for the deterministic
-    baselines); log its metrics and predictions."""
+    """Every seed (one for persistence and ridge: the same result for any seed). The run ends
+    FINISHED only if every seed did, so a crashed evaluation is never reported."""
     hp = best_params(cfg, name)
     seeds = cfg.seeds[:1] if name in UNTUNED else cfg.seeds
     n_inputs = 1 if name == "persistence" else ds.n_features  # for the adjusted R2
 
     preds, tests = [], []
-    with eval_run(name):
+    with mlflow.start_run(run_name=f"eval/{name}"):
         for seed in seeds:
             with child_run(f"seed-{seed}", seed=str(seed)):
                 fitted, info = fit(name, hp, ds, EVAL, seed)

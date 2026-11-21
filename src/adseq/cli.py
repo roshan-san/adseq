@@ -19,7 +19,6 @@ MLFLOW_URI = "sqlite:///runs/mlflow.db"
 
 
 def start_tracking(cfg: Config) -> None:
-    """Log to MLFLOW_URI, in the experiment named --name; LightGBM logs its own curves."""
     RUNS.mkdir(exist_ok=True)  # MLFLOW_URI's sqlite file lives there
     os.environ.setdefault("MLFLOW_ENABLE_ARTIFACTS_PROGRESS_BAR", "false")  # no bars in the logs
     mlflow.set_tracking_uri(MLFLOW_URI)
@@ -28,8 +27,7 @@ def start_tracking(cfg: Config) -> None:
 
 
 def run_cmd(cfg: Cfg) -> None:
-    """For each model: tune it (TUNE settings; persistence and ridge have nothing to tune), then
-    evaluate it with every seed (EVAL settings). Re-running resumes tuning where it stopped."""
+    """Tune each model, then evaluate it with every seed. Re-running resumes the tuning."""
     start_tracking(cfg)
     tune_ds = build_dataset(load_processed(), TUNE.stride)  # built once, shared by every model
     eval_ds = replace(tune_ds, stride=EVAL.stride)  # the same samples, every minute
@@ -40,7 +38,7 @@ def run_cmd(cfg: Cfg) -> None:
 
 
 def report_cmd(cfg: Cfg) -> None:
-    """Results table (incl. Schroer & Just's own MLP) and figure."""
+    """Results table and figure, with Schroer & Just's own MLP."""
     start_tracking(cfg)
     make_report(cfg)
 
