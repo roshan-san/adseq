@@ -2,7 +2,7 @@
 
 Residual recurrent networks (Res-RNN / Res-GRU / Res-LSTM) for 24-h-ahead biogas forecasting from
 full-scale co-digestion SCADA data (Muscatine, IA WRRF), compared with persistence, ridge,
-LightGBM, plain RNN/GRU/LSTM and Schroer & Just's (2024) own MLP.
+LightGBM, plain RNN/GRU/LSTM and Schroer & Just's (2024) MLP, retrained with their settings.
 
 ## Setup
 
@@ -22,9 +22,8 @@ uv run prepare_data.py
 ```
 
 Once, before anything else. It downloads the raw SCADA data (85 MB, `data/raw/`) and Schroer &
-Just's code (`references/schroer2024/`), runs their notebooks unmodified to build the data every
-model trains on (`data/processed/SCADA-FINAL.csv`), and reproduces their MLP's test predictions
-(`data/processed/schroer_mlp_test.csv`). Steps already done are skipped. Their code needs an
+Just's code (`references/schroer2024/`), runs their pretreatment notebook unmodified to build the
+data every model trains on (`data/processed/SCADA-FINAL.csv`). Steps already done are skipped. Their code needs an
 environment from its time; the file declares it, and uv builds it.
 
 ## Run
@@ -51,12 +50,13 @@ Tuning resumes where it stopped: re-running continues each model's Optuna study 
 
 ```bash
 tmux new -s adseq                      # so it survives closing the terminal
-scripts/run_baselines.sh --name main   # persistence + ridge: a few minutes
+scripts/run_baselines.sh --name main   # persistence, ridge, their MLP: a few minutes
 scripts/run_recurrent.sh --name main   # then Ctrl-b d to detach; `tmux attach -t adseq` to return
 scripts/run_lgbm.sh --name main        # once the recurrent models are done
 ```
 
-`run_baselines.sh` evaluates persistence and ridge (nothing to tune). `run_recurrent.sh` tunes and
+`run_baselines.sh` evaluates persistence, ridge and Schroer & Just's MLP (`sj_mlp`, their
+settings: nothing to tune). `run_recurrent.sh` tunes and
 evaluates the six recurrent models, one single-threaded process each. `run_lgbm.sh` tunes and
 evaluates LightGBM using every core; run it after the recurrent models, alone: its flattened
 windows need several GB. Each script ends with the report, which leaves out models not run yet. Logs go
@@ -80,8 +80,7 @@ eval/<model>        test_<metric>_mean / _std over seeds, n_seeds, preds.npz (ev
 ```
 
 `evaluate` makes a new `eval/<model>` run each time; the report uses the newest finished one per
-model (a crashed evaluation is never used). The report adds Schroer & Just's MLP from
-`data/processed/schroer_mlp_test.csv` (from `prepare_data.py`), scored on the same test minutes.
+model (a crashed evaluation is never used), and reads nothing but MLflow.
 
 What stays in `runs/<name>/`:
 
@@ -92,7 +91,7 @@ figures/test_predictions.pdf
 ```
 
 `summary.csv` and `figures/` are regenerated from MLflow by `adseq report`. Browse the runs
-(filter with `tags.kind = 'eval'`):
+(filter with `tags.mlflow.runName LIKE 'eval/%'`):
 
 ```bash
 uv run mlflow ui --backend-store-uri sqlite:///runs/mlflow.db
@@ -108,4 +107,7 @@ uv run ruff format src && uv run ruff check src
 
 - Data: Muscatine, IA WRRF minute SCADA data, 2022-03-18 to 2023-02-28,
   doi:10.25820/data.006715 (ODC-By 1.0).
-- Schroer, H. & Just, C. (2024), code: doi:10.5281/zenodo.8360096 (MIT).
+- Schroer, H. & Just, C. (2024), code: doi:10.5281/zenodo.8360096 (MIT). `sj_mlp` is their final
+  SCADA MLP (`SCADA-MLP.ipynb`, cell 2). With their split and seed, adseq's version reproduces
+  their test predictions (max difference 1e-13 ft³/min; MAPE 13.39 %, adj. R² 0.776; checked
+  2026-11-21). In adseq it trains on the same pre-test minutes and seeds as the other models.

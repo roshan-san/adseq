@@ -4,6 +4,7 @@ __pycache__/
 .ruff_cache/
 
 runs/
+mlruns/
 docs/
 
 data/

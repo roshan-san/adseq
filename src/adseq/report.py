@@ -1,7 +1,7 @@
-"""runs/<name>/summary.csv and figures/: views for the paper, rebuilt from MLflow at any time."""
+"""runs/<name>/summary.csv and figures/: views for the paper, read from MLflow only (the newest
+finished eval/<model> runs) and rebuilt at any time. Everything else: the MLflow UI."""
 
 import tempfile
-from pathlib import Path
 
 import matplotlib
 
@@ -13,10 +13,9 @@ import pandas as pd
 from mlflow.artifacts import download_artifacts
 
 from .config import Config
-from .evaluate import regression_metrics
 
 NAMES = {  # table / legend label of every model, in table order
-    "sj_mlp": "MLP, Schroer & Just (their code)",
+    "sj_mlp": "MLP, Schroer & Just (retrained)",
     "persistence": "Persistence",
     "ridge": "Ridge",
     "lgbm": "LightGBM",
@@ -29,8 +28,7 @@ NAMES = {  # table / legend label of every model, in table order
     "lstm_res": "Res-LSTM (proposed)",
 }
 METRICS = ["adj_r2", "mape", "rmse", "mae", "teei", "r2"]
-SJ_PREDS = Path("data/processed/schroer_mlp_test.csv")  # from prepare_data.py
-SJ_INPUTS = 36  # inputs of their MLP, for its adjusted R2
+PLOTTED = ("sj_mlp", "gru_res")  # the figure's curves, when evaluated
 
 
 def load_preds(run_id: str) -> dict:
@@ -53,41 +51,30 @@ def latest_evals(cfg: Config) -> pd.DataFrame:
     return runs.drop_duplicates("model")
 
 
-def load_sj_mlp(ours: dict) -> np.ndarray | None:
-    """Their MLP's test predictions, checked against our test minutes and labels (ours: any eval
-    run's preds)."""
-    if not SJ_PREDS.exists():
-        print(f"[report] sj_mlp: {SJ_PREDS} missing, left out (run `uv run prepare_data.py`)")
-        return None
-    sj = pd.read_csv(SJ_PREDS, index_col=0, parse_dates=True)
-    te = ours["split"] == "test"
-    same = pd.to_datetime(ours["dates"][te]).equals(sj.index)
-    if not same or not np.allclose(sj["y_true"], ours["y_true"][te]):
-        raise ValueError("their MLP was scored on different test minutes or labels")
-    return sj["pred"].to_numpy()
-
-
-def summary_table(runs: pd.DataFrame, extra: list[dict]) -> pd.DataFrame:
-    """One row per model, in NAMES order; extra: rows already in that shape (their MLP)."""
+def summary_table(runs: pd.DataFrame) -> pd.DataFrame:
+    """One row per model, in NAMES order."""
     stats = [f"metrics.test_{m}_{stat}" for m in METRICS for stat in ("mean", "std")]
     cols = ["model", *stats, "metrics.n_seeds", "run_id"]
     s = runs.filter(items=cols).rename(
         columns={c: c.split(".")[-1].removeprefix("test_") for c in cols}
     )
-    s = pd.concat([pd.DataFrame(extra, columns=s.columns), s]).astype({"n_seeds": int})
+    s = s.astype({"n_seeds": int})
     order = {name: i for i, name in enumerate(NAMES)}
     return s.sort_values("model", key=lambda c: c.map(order)).reset_index(drop=True)
 
 
-def plot_test_predictions(cfg: Config, ours: dict, curves: dict[str, np.ndarray]) -> None:
-    """Measured vs. predicted over the test period, single-column. curves: model -> test preds."""
+def plot_test_predictions(cfg: Config, run_ids: dict[str, str]) -> None:
+    """Measured vs. the PLOTTED models (mean over seeds) over the test period, single-column."""
+    shown = {name: load_preds(run_ids[name]) for name in PLOTTED if name in run_ids}
+    ref = next(iter(shown.values())) if shown else load_preds(next(iter(run_ids.values())))
+    te = ref["split"] == "test"
+    dates = pd.to_datetime(ref["dates"][te])
+
     plt.rcParams.update({"font.family": "serif", "font.size": 8, "pdf.fonttype": 42})
     fig, ax = plt.subplots(figsize=(3.5, 2.2))
-    te = ours["split"] == "test"
-    dates = pd.to_datetime(ours["dates"][te])
-    ax.plot(dates, ours["y_true"][te], "k-", lw=1, label="Measured")
-    for k, (name, pred) in enumerate(curves.items()):
-        ax.plot(dates, pred, lw=0.8, ls=["--", "-"][k % 2], label=NAMES[name])
+    ax.plot(dates, ref["y_true"][te], "k-", lw=1, label="Measured")
+    for k, (name, p) in enumerate(shown.items()):
+        ax.plot(dates, p["preds"].mean(0)[te], lw=0.8, ls=["--", "-"][k % 2], label=NAMES[name])
 
     ax.set_ylabel("Next-24-h biogas (ft$^3$/min)")
     ax.legend(frameon=False, fontsize=6)
@@ -105,25 +92,13 @@ def make_report(cfg: Config) -> None:
             f"no finished evaluations in MLflow experiment {cfg.name}: run `adseq evaluate` first"
         )
     run_ids = dict(zip(runs["model"], runs["run_id"], strict=True))
-    ours = load_preds(run_ids.get("gru_res", runs["run_id"].iloc[0]))
-    te = ours["split"] == "test"
-    extra, curves = [], {}
-    sj = load_sj_mlp(ours)
-    if sj is not None:
-        t = regression_metrics(ours["y_true"][te], sj, SJ_INPUTS)
-        means = {f"{m}_mean": t[m] for m in METRICS}
-        stds = {f"{m}_std": float("nan") for m in METRICS}  # one set of predictions
-        extra.append({"model": "sj_mlp", **means, **stds, "n_seeds": 1, "run_id": ""})
-        curves["sj_mlp"] = sj
-    if "gru_res" in run_ids:
-        curves["gru_res"] = ours["preds"].mean(0)[te]  # mean over seeds
-    missing = [name for name in NAMES if name not in run_ids and name != "sj_mlp"]
+    missing = [name for name in NAMES if name not in run_ids]
     if missing:
         print(f"[report] not run, left out: {', '.join(missing)}")
 
-    s = summary_table(runs, extra)
+    s = summary_table(runs)
     s.to_csv(cfg.run_dir / "summary.csv", index=False)
-    plot_test_predictions(cfg, ours, curves)
+    plot_test_predictions(cfg, run_ids)
     show = s[["model", "adj_r2_mean", "mape_mean", "rmse_mean", "teei_mean", "n_seeds"]]
     print(show.round(4).to_string(index=False))
     print(f"\nSaved to {cfg.run_dir}: summary.csv, figures/")

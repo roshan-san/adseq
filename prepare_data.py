@@ -9,16 +9,16 @@
 #     "statsmodels",
 # ]
 # ///
-"""Get the data and reproduce Schroer & Just's (2024) MLP: `uv run prepare_data.py`, once.
+"""Get the data every model trains on, built by Schroer & Just's (2024) own code:
+`uv run prepare_data.py`, once.
 
 1. download the raw SCADA data (Muscatine, IA WRRF)   -> data/raw/muscatine_scada.csv
 2. download their code (doi:10.5281/zenodo.8360096)     -> references/schroer2024/
 3. run their SCADA-pretreatment notebook, unmodified   -> data/processed/SCADA-FINAL.csv
-4. run their SCADA-MLP notebook (cells 0-3), unmodified -> data/processed/schroer_mlp_test.csv
 
 Every step is skipped when its output exists. Their code needs the environment above, from its
 time (it uses pandas' since-removed freq='T' and fillna(method=...)), so this file declares its
-own and isn't part of the adseq package. Their SHAP / figure cells are not run (hours, not needed).
+own and isn't part of the adseq package.
 """
 
 import io
@@ -32,14 +32,12 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import pandas as pd
 
 ROOT = Path(__file__).resolve().parent
-# PROCESSED and SJ_PREDS must match adseq.data / adseq.report (adseq can't be imported here)
+# PROCESSED must match adseq.data (adseq can't be imported here)
 RAW = ROOT / "data" / "raw" / "muscatine_scada.csv"
 CODE = ROOT / "references" / "schroer2024"
 PROCESSED = ROOT / "data" / "processed" / "SCADA-FINAL.csv"
-SJ_PREDS = ROOT / "data" / "processed" / "schroer_mlp_test.csv"
 
 # minute SCADA data 2022-03-18..2023-02-28, doi:10.25820/data.006715, licence ODC-By 1.0
 SCADA_URL = "https://iro.uiowa.edu/view/fileRedirect?instCode=01IOWA_INST&filePid=13894605000002771&download=true"
@@ -99,12 +97,5 @@ if not PROCESSED.exists():
         run("SCADA/SCADA-pretreatment.ipynb")
     PROCESSED.parent.mkdir(parents=True, exist_ok=True)
     theirs.replace(PROCESSED)
-link(PROCESSED, theirs)  # their MLP notebook reads it from their folder
 
-# 4. their final MLP, trained and scored on their test set
-if not SJ_PREDS.exists():
-    ns = run("SCADA/SCADA-MLP.ipynb", slice(0, 4))
-    pd.DataFrame({"y_true": ns["y_test"], "pred": ns["y_test_ann1"]}).to_csv(SJ_PREDS)
-    print(f"saved {SJ_PREDS}")
-
-print(f"ready: {PROCESSED}, {SJ_PREDS}")
+print(f"ready: {PROCESSED}")
