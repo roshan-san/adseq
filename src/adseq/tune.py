@@ -74,7 +74,7 @@ def open_study(cfg: Config, name: str) -> optuna.Study:
         direction="minimize",
         load_if_exists=True,
         pruner=optuna.pruners.MedianPruner(
-            n_startup_trials=PRUNE_STARTUP, n_warmup_steps=PRUNE_WARMUP_PASSES * cfg.stride
+            n_startup_trials=PRUNE_STARTUP, n_warmup_steps=PRUNE_WARMUP_PASSES * cfg.tune.stride
         ),
     )
     # seed 0 for a new study, so a run without interruptions can be replayed exactly; after a
@@ -95,7 +95,7 @@ def run_trial(trial: Trial, name: str, ds: Dataset, cfg: Config) -> float:
         return pruned
 
     with child_run(f"trial-{trial.number}", trial=str(trial.number)):
-        _, info = fit(name, hp, ds, cfg, seed=0, on_step=on_step)
+        _, info = fit(name, hp, ds, cfg.tune, seed=0, on_step=on_step)
         mlflow.log_params(hp)
         log_info(info)
         mlflow.set_tag("pruned", str(pruned).lower())

@@ -37,7 +37,7 @@ def evaluate(cfg: Config, ds: Dataset, name: str) -> None:
     with eval_run(name):
         for seed in seeds:
             with child_run(f"seed-{seed}", seed=str(seed)):
-                fitted, info = fit(name, hp, ds, cfg, seed)
+                fitted, info = fit(name, hp, ds, cfg.eval, seed)
                 pred = predict(fitted, name, hp, ds)
                 scores = {
                     s: regression_metrics(ds.y_true[ds.part(s)], pred[ds.part(s)], n_inputs)

@@ -1,6 +1,5 @@
 """Command line (tyro). Run `uv run adseq --help` or `uv run adseq <command> --help`."""
 
-import dataclasses
 import io
 import urllib.request
 import zipfile
@@ -51,13 +50,12 @@ def fetch_cmd(cfg: Cfg) -> None:
 
 
 def tune_cmd(cfg: Cfg) -> None:
-    """Optuna search for every tuned model (same trial budget for all), with the --tune-*
+    """Optuna search for every tuned model (same trial budget for all), with the --tune.*
     stride and epoch limits."""
     start_tracking(cfg)
-    cfg = dataclasses.replace(
-        cfg, stride=cfg.tune_stride, max_epochs=cfg.tune_max_epochs, patience=cfg.tune_patience
-    )
-    ds = build_dataset(load_processed(), cfg)  # built once, shared by every model
+    ds = build_dataset(
+        load_processed(), cfg.val_frac, cfg.tune.stride
+    )  # built once, shared by every model
     for name in cfg.models:
         if name in TUNED_MODELS:
             tune(cfg, ds, name)
@@ -66,7 +64,9 @@ def tune_cmd(cfg: Cfg) -> None:
 def evaluate_cmd(cfg: Cfg) -> None:
     """Train each model with every seed using its best hyper-parameters; score on the test period."""
     start_tracking(cfg)
-    ds = build_dataset(load_processed(), cfg)  # built once, shared by every model
+    ds = build_dataset(
+        load_processed(), cfg.val_frac, cfg.eval.stride
+    )  # built once, shared by every model
     for name in cfg.models:
         evaluate(cfg, ds, name)
 

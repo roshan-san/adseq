@@ -30,7 +30,7 @@ from sklearn.pipeline import Pipeline, make_pipeline
 from sklearn.preprocessing import StandardScaler
 from torch import nn
 
-from .config import Config
+from .config import Training
 from .data import Dataset
 from .models import TREE_MODELS, RecurrentNet, is_residual, make_model
 
@@ -47,7 +47,7 @@ Fitted = RecurrentNet | lgb.Booster | Pipeline | None  # None: persistence (noth
 
 
 def fit(
-    name: str, hp: dict, ds: Dataset, cfg: Config, seed: int, on_step: OnStep | None = None
+    name: str, hp: dict, ds: Dataset, train: Training, seed: int, on_step: OnStep | None = None
 ) -> tuple[Fitted, dict]:
     """The fitted model and training info. on_step (recurrent models only) can
     stop the training early: Optuna pruning."""
@@ -57,7 +57,7 @@ def fit(
         return fit_ridge(ds)
     if name in TREE_MODELS:
         return fit_lgbm(name, hp, ds, seed)
-    return fit_recurrent(name, hp, ds, cfg, seed, on_step)
+    return fit_recurrent(name, hp, ds, train, seed, on_step)
 
 
 def predict(fitted: Fitted, name: str, hp: dict, ds: Dataset) -> np.ndarray:
@@ -188,18 +188,18 @@ def log_lgbm_curve(train_loss: list[float], val_rmse: list[float]) -> None:
 
 
 def fit_recurrent(
-    name: str, hp: dict, ds: Dataset, cfg: Config, seed: int, on_step: OnStep | None = None
+    name: str, hp: dict, ds: Dataset, train: Training, seed: int, on_step: OnStep | None = None
 ) -> tuple[RecurrentNet, dict]:
     """Train on the training samples; return the best-validation-epoch model. After every
     epoch on_step (if given) sees the best val RMSE so far and may stop the training."""
-    train, val = ds.part("train"), ds.part("val")
+    train_idx, val_idx = ds.part("train"), ds.part("val")
     y = torch.from_numpy((ds.y - base_level(name, ds)).astype(np.float32))
 
     torch.manual_seed(seed)  # also seeds CUDA; the weights are initialised on the CPU either way
     model = make_model(name, hp, ds.n_features).to(DEVICE)
     opt = torch.optim.AdamW(model.parameters(), lr=hp["lr"], weight_decay=hp["weight_decay"])
     loss_fn = nn.L1Loss() if hp["loss"] == "l1" else nn.MSELoss()
-    val_chunks = chunks(val)  # the ~77k validation windows would take ~0.8 GB at once
+    val_chunks = chunks(val_idx)  # the ~77k validation windows would take ~0.8 GB at once
 
     def val_rmse() -> float:
         model.eval()
@@ -208,12 +208,12 @@ def fit_recurrent(
             for c in val_chunks:
                 pred = model(net_input(ds, c, hp["window"]))
                 sq += (pred - y[c].to(DEVICE)).pow(2).sum().item()
-        return (sq / len(val)) ** 0.5
+        return (sq / len(val_idx)) ** 0.5
 
     def train_epoch() -> float:
         """One pass over the shuffled training samples; the mean training loss."""
         model.train()
-        order = train[torch.randperm(len(train)).numpy()]
+        order = train_idx[torch.randperm(len(train_idx)).numpy()]
         loss_sum = 0.0
         for i in range(0, len(order), hp["batch_size"]):
             batch = order[i : i + hp["batch_size"]]
@@ -227,13 +227,13 @@ def fit_recurrent(
 
     # epoch 0 = untrained weights, so there is always a state to restore
     best_rmse, best_state, best_epoch = val_rmse(), copy.deepcopy(model.state_dict()), 0
-    for epoch in range(1, cfg.max_epochs + 1):
+    for epoch in range(1, train.max_epochs + 1):
         train_loss = train_epoch()
         rmse = val_rmse()
         mlflow.log_metrics({"epoch_train_loss": train_loss, "epoch_val_rmse": rmse}, step=epoch)
         if rmse < best_rmse:
             best_rmse, best_state, best_epoch = rmse, copy.deepcopy(model.state_dict()), epoch
-        if epoch - best_epoch >= cfg.patience or (on_step and on_step(epoch, best_rmse)):
+        if epoch - best_epoch >= train.patience or (on_step and on_step(epoch, best_rmse)):
             break
 
     model.load_state_dict(best_state)

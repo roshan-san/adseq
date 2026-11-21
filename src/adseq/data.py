@@ -24,8 +24,6 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
-from .config import Config
-
 TARGET = "Forecast"  # mean biogas flow over the next 24 h, ft^3/min (their name)
 PERSISTENCE = "Biogas_prev_hour_avg"  # mean of the previous clock hour (their baseline)
 HORIZON = 1440  # minutes ahead the target reaches
@@ -109,9 +107,9 @@ class Dataset:
         return y_scaled * self.y_scale + self.y_offset
 
 
-def build_dataset(df: pd.DataFrame, cfg: Config) -> Dataset:
+def build_dataset(df: pd.DataFrame, val_frac: float, stride: int) -> Dataset:
     dates = pd.DatetimeIndex(df.index)
-    split = time_split(dates, cfg.val_frac)
+    split = time_split(dates, val_frac)
     features = df.columns.drop(TARGET)
     y_all = df[TARGET].to_numpy(float)
 
@@ -140,5 +138,5 @@ def build_dataset(df: pd.DataFrame, cfg: Config) -> Dataset:
         y_prev=df[PERSISTENCE].to_numpy(float)[keep],
         y_offset=y_offset,
         y_scale=y_scale,
-        stride=cfg.stride,
+        stride=stride,
     )

@@ -47,15 +47,15 @@ Useful flags (all commands take the same ones; `uv run adseq <command> --help` l
 | `--name` | `main` | output folder `runs/<name>/` and MLflow experiment |
 | `--models` | all | e.g. `--models gru_res lstm_res` |
 | `--n-trials` | 50 | Optuna trials per tuned model |
-| `--max-epochs` / `--patience` | 50 / 10 | evaluation: recurrent training and early stopping |
-| `--stride` | 1 | evaluation: train / validate on every k-th minute (test: always every minute) |
-| `--tune-max-epochs` / `--tune-patience` / `--tune-stride` | 200 / 20 / 10 | the same, while tuning |
+| `--eval.max-epochs` / `--eval.patience` | 50 / 10 | evaluation: recurrent training and early stopping |
+| `--eval.stride` | 1 | evaluation: train / validate on every k-th minute (test: always every minute) |
+| `--tune.max-epochs` / `--tune.patience` / `--tune.stride` | 200 / 20 / 10 | the same, while tuning |
 | `--seeds` | 1 2 3 4 5 | evaluation seeds |
 
 Quick check that everything runs (a few minutes on a CPU):
 
 ```bash
-uv run adseq run-all --name smoke --models persistence ridge gru_res --n-trials 2 --max-epochs 1 --tune-max-epochs 1 --seeds 1
+uv run adseq run-all --name smoke --models persistence ridge gru_res --n-trials 2 --eval.max-epochs 1 --tune.max-epochs 1 --seeds 1
 ```
 
 Tuning resumes where it stopped: re-running continues each model's Optuna study from
@@ -73,7 +73,7 @@ once those finish, LightGBM and the baselines are evaluated alone (their flatten
 several GB), then the report. Logs go to `runs/logs/`; re-run the script to resume after a
 failure.
 
-Tuning trains and validates on every 10th minute, with longer epoch limits (the `--tune-*`
+Tuning trains and validates on every 10th minute, with longer epoch limits (the `--tune.*`
 settings): neighbouring minutes are near-duplicates, so it finds the same kind of models several
 times faster. Evaluation, which produces the reported numbers, trains on every minute.
 
