@@ -9,8 +9,9 @@ from mlflow.lightgbm import autolog as autolog_lightgbm
 
 from .config import EVAL, RUNS, TUNE, UNTUNED, Config
 from .data import build_dataset, load_processed
+from .evaluate import evaluate
 from .report import make_report
-from .run import evaluate, tune
+from .tune import tune
 
 # flags read --n-trials instead of --cfg.n-trials
 Cfg = Annotated[Config, tyro.conf.arg(name="")]

@@ -13,7 +13,7 @@ import pandas as pd
 from mlflow.artifacts import download_artifacts
 
 from .config import Config
-from .run import regression_metrics
+from .evaluate import regression_metrics
 
 NAMES = {  # table / legend label of every model, in table order
     "sj_mlp": "MLP, Schroer & Just (their code)",

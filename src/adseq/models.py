@@ -278,6 +278,12 @@ def fit(
     return fit_recurrent(name.removesuffix("_res"), residual, hp, ds, train, seed, on_step)
 
 
+def log_info(info: dict) -> None:
+    """fit's info: numbers as metrics, strings (the device) as tags."""
+    mlflow.log_metrics({k: v for k, v in info.items() if not isinstance(v, str)})
+    mlflow.set_tags({k: v for k, v in info.items() if isinstance(v, str)})
+
+
 def predict(fitted: Fitted, name: ModelName, hp: dict, ds: Dataset) -> np.ndarray:
     """ft^3/min, for every sample."""
     residual = name.endswith("_res")

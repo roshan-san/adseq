@@ -1,9 +1,7 @@
-"""The two jobs, one after the other for each model: tune (Optuna, the same trial budget for
-every model, resumable from runs/<name>/optuna/<model>.log), then evaluate with every seed.
-
-MLflow, one experiment per --name (lookups by run name, FINISHED runs only, newest first):
-  tune/<model>   best_params.json, best_val_rmse;    trial-<n> children: hp, curve, fit info
-  eval/<model>   test_<metric>_mean/_std, preds.npz; seed-<s> children: hp, curve, every split
+"""Train each model with every seed using its best hyper-parameters, and score every split.
+MLflow: an eval/<model> run (test_<metric>_mean/_std over seeds, preds.npz) with a seed-<s> child
+per seed (hyper-parameters, learning curve, every split's metrics). Lookups go by run name,
+FINISHED runs only, newest first.
 """
 
 import tempfile
@@ -11,12 +9,8 @@ from pathlib import Path
 
 import mlflow
 import numpy as np
-import optuna
 import pandas as pd
 from mlflow.artifacts import load_dict
-from optuna.storages import JournalStorage
-from optuna.storages.journal import JournalFileBackend
-from optuna.trial import Trial, TrialState
 from sklearn.metrics import (
     mean_absolute_error,
     mean_absolute_percentage_error,
@@ -24,17 +18,13 @@ from sklearn.metrics import (
     root_mean_squared_error,
 )
 
-from .config import EVAL, TUNE, UNTUNED, Config, ModelName
+from .config import EVAL, UNTUNED, Config, ModelName
 from .data import Dataset
-from .models import fit, predict, space
+from .models import fit, log_info, predict
+
+SPLITS = ("train", "val", "test")
 
 # --- MLflow -------------------------------------------------------------------------------------
-
-
-def log_info(info: dict) -> None:
-    """Numbers as metrics, strings (the device) as tags."""
-    mlflow.log_metrics({k: v for k, v in info.items() if not isinstance(v, str)})
-    mlflow.set_tags({k: v for k, v in info.items() if isinstance(v, str)})
 
 
 def finished_runs(cfg: Config, run_name: str) -> pd.DataFrame:
@@ -44,10 +34,6 @@ def finished_runs(cfg: Config, run_name: str) -> pd.DataFrame:
         filter_string=f"tags.mlflow.runName = '{run_name}' AND attributes.status = 'FINISHED'",
         order_by=["attributes.start_time DESC"],
     )
-
-
-def child_run(name: str, **tags: str) -> mlflow.ActiveRun:
-    return mlflow.start_run(run_name=name, nested=True, tags=tags)
 
 
 def best_params(cfg: Config, model: ModelName) -> dict:
@@ -106,72 +92,7 @@ def regression_metrics(y: np.ndarray, p: np.ndarray, k: int = 1) -> dict[str, fl
     }
 
 
-# --- tuning -------------------------------------------------------------------------------------
-
-PRUNE_STARTUP = 5  # finished trials before any pruning (Optuna's MedianPruner default)
-# passes over the training data before a recurrent trial may be pruned: slow starters need them
-# (the tuned gru_res is still 5.8 % above its final val RMSE after 2 passes, 1.9 % after 3)
-PRUNE_WARMUP_PASSES = 3
-FINISHED = (TrialState.COMPLETE, TrialState.PRUNED)  # what counts towards --n-trials
-
-
-def open_study(cfg: Config, name: ModelName) -> optuna.Study:
-    study_file = cfg.run_dir / "optuna" / f"{name}.log"
-    study_file.parent.mkdir(exist_ok=True)
-    study = optuna.create_study(
-        study_name=name,
-        storage=JournalStorage(JournalFileBackend(str(study_file))),
-        direction="minimize",
-        load_if_exists=True,
-        pruner=optuna.pruners.MedianPruner(
-            n_startup_trials=PRUNE_STARTUP, n_warmup_steps=PRUNE_WARMUP_PASSES * TUNE.stride
-        ),
-    )
-    # seed 0 replays an uninterrupted run exactly; after a resume the seed moves on, else the
-    # sampler's random first trials would repeat earlier ones
-    study.sampler = optuna.samplers.TPESampler(seed=len(study.trials))
-    return study
-
-
-def run_trial(trial: Trial, name: ModelName, ds: Dataset, cfg: Config) -> float:
-    """Its best val RMSE (scaled), or TrialPruned."""
-    hp = space(trial, name)
-    pruned = False
-
-    def on_step(epoch: int, best_so_far: float) -> bool:
-        nonlocal pruned
-        trial.report(best_so_far, epoch)
-        pruned = trial.should_prune()
-        return pruned
-
-    with child_run(f"trial-{trial.number}", trial=str(trial.number)):
-        _, info = fit(name, hp, ds, TUNE, seed=0, on_step=on_step)
-        mlflow.log_params(hp)
-        log_info(info)
-        mlflow.set_tag("pruned", str(pruned).lower())
-    if pruned:
-        raise optuna.TrialPruned()
-    return info["val_rmse_scaled"]
-
-
-def tune(cfg: Config, ds: Dataset, name: ModelName) -> dict:
-    """Up to --n-trials finished trials (completed or pruned), seed 0 each."""
-    study = open_study(cfg, name)
-    remaining = cfg.n_trials - len(study.get_trials(deepcopy=False, states=FINISHED))
-    with mlflow.start_run(run_name=f"tune/{name}"):
-        if remaining > 0:
-            # a trial that raises stops the study with its traceback; re-run to continue
-            study.optimize(lambda trial: run_trial(trial, name, ds, cfg), n_trials=remaining)
-        best, val = study.best_params, study.best_value
-        mlflow.log_dict(best, "best_params.json")
-        mlflow.log_metric("best_val_rmse", val)  # scaled units, as the objective
-    print(f"[tune] {name}: best val RMSE = {val * ds.y_scale:.2f} (scaled {val:.4f})  {best}")
-    return best
-
-
 # --- evaluation ---------------------------------------------------------------------------------
-
-SPLITS = ("train", "val", "test")
 
 
 def evaluate(cfg: Config, ds: Dataset, name: ModelName) -> None:
@@ -184,7 +105,7 @@ def evaluate(cfg: Config, ds: Dataset, name: ModelName) -> None:
     preds, tests = [], []
     with mlflow.start_run(run_name=f"eval/{name}"):
         for seed in seeds:
-            with child_run(f"seed-{seed}", seed=str(seed)):
+            with mlflow.start_run(run_name=f"seed-{seed}", nested=True, tags={"seed": str(seed)}):
                 fitted, info = fit(name, hp, ds, EVAL, seed)
                 pred = predict(fitted, name, hp, ds)
                 scores = {
