@@ -1,16 +1,10 @@
-# environment / caches
 .venv/
 __pycache__/
 .pytest_cache/
 .ruff_cache/
 
-# experiment outputs: regenerate with `uv run adseq run-all --name <name>`
 runs/
-mlruns/
 docs/
 
-# downloaded data: `uv run adseq fetch`
 data/
-
-# Schroer & Just (2024) code + data (MIT), from doi:10.5281/zenodo.8360096 -- reference only
-reference/
+references/
