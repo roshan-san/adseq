@@ -1,4 +1,4 @@
-"""The models, by name: persistence and ridge (Schroer & Just's baselines), LightGBM on the
+"""The models, by name: persistence, ridge and their MLP (Schroer & Just's models), LightGBM on the
 flattened window, and rnn / gru / lstm over the last L hours. *_res models predict the change
 from persistence, which is then added back (the proposed Res-RNN / GRU / LSTM; lgbm_res is the
 ablation: residual target without the recurrent network)."""
@@ -13,6 +13,7 @@ import torch
 from optuna.trial import Trial
 from sklearn.linear_model import RidgeCV
 from sklearn.model_selection import TimeSeriesSplit
+from sklearn.neural_network import MLPRegressor
 from sklearn.pipeline import Pipeline, make_pipeline
 from sklearn.preprocessing import StandardScaler
 from torch import nn
@@ -34,6 +35,34 @@ def fit_ridge(ds: Dataset) -> tuple[Pipeline, dict]:
     ridge = model.named_steps["ridgecv"]
     info = {"epochs": 0, "alpha": float(ridge.alpha_), "n_params": ridge.coef_.size + 1}
     return model, info
+
+
+# --- Schroer & Just's MLP ------------------------------------------------------------------
+
+
+def sj_mlp_pipeline(seed: int) -> Pipeline:
+    """Their final SCADA MLP, settings verbatim (SCADA/SCADA-MLP.ipynb, cell 2)."""
+    mlp = MLPRegressor(
+        hidden_layer_sizes=(20,),
+        solver="sgd",
+        learning_rate="invscaling",
+        alpha=155,
+        max_iter=200,
+        early_stopping=True,  # its own random 10 % of the rows, as theirs
+        random_state=seed,
+    )
+    return make_pipeline(StandardScaler(), mlp)
+
+
+def fit_sj_mlp(ds: Dataset, seed: int) -> tuple[Pipeline, dict]:
+    """On every pre-test minute, as ridge (their whole training set), against the raw target in
+    ft^3/min: alpha=155 was tuned for that scale."""
+    rows = np.flatnonzero(ds.split != "test")
+    model = sj_mlp_pipeline(seed)
+    model.fit(ds.X[rows].astype(float), ds.y_true[rows].astype(float))
+    mlp = model.named_steps["mlpregressor"]
+    n_params = sum(w.size for w in mlp.coefs_) + sum(b.size for b in mlp.intercepts_)
+    return model, {"epochs": mlp.n_iter_, "n_params": n_params}
 
 
 # --- LightGBM ------------------------------------------------------------------------------
@@ -273,6 +302,8 @@ def fit(
         return None, {"epochs": 0, "n_params": 0}
     if name == "ridge":
         return fit_ridge(ds)
+    if name == "sj_mlp":
+        return fit_sj_mlp(ds, seed)
     if name.startswith("lgbm"):
         return fit_lgbm(residual, hp, ds, seed)
     return fit_recurrent(name.removesuffix("_res"), residual, hp, ds, train, seed, on_step)
@@ -289,6 +320,8 @@ def predict(fitted: Fitted, name: ModelName, hp: dict, ds: Dataset) -> np.ndarra
     residual = name.endswith("_res")
     if fitted is None:
         return ds.y_prev
+    if name == "sj_mlp" and isinstance(fitted, Pipeline):  # trained on the raw target
+        return np.asarray(fitted.predict(ds.X.astype(float)))
     if isinstance(fitted, Pipeline):
         return ds.unscale(np.asarray(fitted.predict(ds.X.astype(float))))
     if isinstance(fitted, lgb.Booster):

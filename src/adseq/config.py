@@ -16,6 +16,7 @@ EVAL = Training(stride=1, max_epochs=50, patience=10)
 
 
 ModelName = Literal[
+    "sj_mlp",
     "persistence",
     "ridge",
     "lgbm",
@@ -28,7 +29,8 @@ ModelName = Literal[
     "lstm_res",
 ]
 
-UNTUNED = ("persistence", "ridge")
+UNTUNED = ("persistence", "ridge", "sj_mlp")  # nothing to tune
+ONE_SEED = ("persistence", "ridge")  # deterministic: one seed
 
 
 @dataclass

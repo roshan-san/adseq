@@ -18,7 +18,7 @@ from sklearn.metrics import (
     root_mean_squared_error,
 )
 
-from .config import EVAL, UNTUNED, Config, ModelName
+from .config import EVAL, ONE_SEED, UNTUNED, Config, ModelName
 from .data import Dataset
 from .models import fit, log_info, predict
 
@@ -96,10 +96,10 @@ def regression_metrics(y: np.ndarray, p: np.ndarray, k: int = 1) -> dict[str, fl
 
 
 def evaluate(cfg: Config, ds: Dataset, name: ModelName) -> None:
-    """Every seed (one for persistence and ridge: the same result for any seed). The run ends
+    """Every seed (one for ONE_SEED models: the same result for any seed). The run ends
     FINISHED only if every seed did, so a crashed evaluation is never reported."""
     hp = best_params(cfg, name)
-    seeds = cfg.seeds[:1] if name in UNTUNED else cfg.seeds
+    seeds = cfg.seeds[:1] if name in ONE_SEED else cfg.seeds
     n_inputs = 1 if name == "persistence" else ds.n_features  # for the adjusted R2
 
     preds, tests = [], []
