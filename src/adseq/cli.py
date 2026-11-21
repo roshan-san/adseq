@@ -27,7 +27,7 @@ def start_tracking(cfg: Config) -> None:
 
 
 def tune_cmd(cfg: Cfg) -> None:
-    """Optuna search for each model (persistence and ridge have nothing to tune). Re-running
+    """Optuna search for each model (persistence, ridge and sj_mlp have nothing to tune). Re-running
     resumes it."""
     start_tracking(cfg)
     ds = build_dataset(load_processed(), TUNE.stride)  # built once, shared by every model
@@ -45,7 +45,7 @@ def evaluate_cmd(cfg: Cfg) -> None:
 
 
 def report_cmd(cfg: Cfg) -> None:
-    """Results table and figure, with Schroer & Just's own MLP."""
+    """Results table and figure, read from MLflow (the newest finished evaluations)."""
     start_tracking(cfg)
     make_report(cfg)
 

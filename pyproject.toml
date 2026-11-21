@@ -60,3 +60,9 @@ src = ["src"]  # else stray run dirs in the root count as first-party
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "NPY", "RUF"]
 ignore = ["E501", "SIM905"]  # SIM905: allow "a b c".split() for name lists
+
+[tool.pyright]
+# the IDE (Pylance) reads this too: use the project venv, skip downloaded third-party code
+venvPath = "."
+venv = ".venv"
+exclude = ["references", "data", "runs", "mlruns", ".venv"]
