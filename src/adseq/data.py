@@ -7,7 +7,7 @@ flow over the next 24 h (ft^3/min). We use the 36 inputs of their final MLP.
 
 Step 2, ours:
   - test = their test set: the last 20 % of rows, every row scored (98,353 minutes)
-  - validation = the last `val_frac` of their training rows; the 24 h before validation and
+  - validation = the last VAL_FRAC of their training rows; the 24 h before validation and
     before test are dropped from train / val, so no training label overlaps a later period
   - min-max scalers fit on training rows only
   - every minute of train / val / test is a sample (except the first MAX_WINDOW - 1 hours,
@@ -21,13 +21,16 @@ import io
 import urllib.request
 import zipfile
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
-from .config import CODE_DIR, PROCESSED, RAW
-
+RAW = Path("data/raw/muscatine_scada.csv")  # their SCADA-raw.csv; input of their pretreatment
+PROCESSED = Path("data/processed/SCADA-FINAL.csv")  # their pretreatment notebook's output
+CODE_DIR = Path("reference/schroer2024")  # their code
+VAL_FRAC = 0.2  # the last 20 % of the training rows validate
 TARGET = "Forecast"  # mean biogas flow over the next 24 h, ft^3/min (their name)
 PERSISTENCE = "Biogas_prev_hour_avg"  # mean of the previous clock hour (their baseline)
 HORIZON = 1440  # minutes ahead the target reaches
@@ -73,12 +76,12 @@ def load_processed() -> pd.DataFrame:
     return pd.read_csv(PROCESSED, index_col=0, parse_dates=True).drop(columns=MLP_DROPS)
 
 
-def time_split(dates: pd.DatetimeIndex, val_frac: float) -> np.ndarray:
+def time_split(dates: pd.DatetimeIndex) -> np.ndarray:
     """Their 80/20 test split (sklearn train_test_split, shuffle=False), our val split of the
     training rows the same way, and 24-h "gap" rows before val and before test."""
     rows = np.arange(len(dates))
     train_rows, test_rows = train_test_split(rows, test_size=0.2, shuffle=False)
-    train_rows, val_rows = train_test_split(train_rows, test_size=val_frac, shuffle=False)
+    train_rows, val_rows = train_test_split(train_rows, test_size=VAL_FRAC, shuffle=False)
     split = np.full(len(rows), "train", dtype="<U5")
     split[val_rows], split[test_rows] = "val", "test"
     gap = pd.Timedelta(minutes=HORIZON)
@@ -149,9 +152,9 @@ def chunks(idx: np.ndarray) -> list[np.ndarray]:
     return np.array_split(idx, max(1, len(idx) // CHUNK))
 
 
-def build_dataset(df: pd.DataFrame, val_frac: float, stride: int) -> Dataset:
+def build_dataset(df: pd.DataFrame, stride: int) -> Dataset:
     dates = pd.DatetimeIndex(df.index)
-    split = time_split(dates, val_frac)
+    split = time_split(dates)
     features = df.columns.drop(TARGET)
     y_all = df[TARGET].to_numpy(float)
 

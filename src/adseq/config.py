@@ -1,16 +1,11 @@
-"""Every experiment setting, and where the data and outputs live. tyro turns each Config field
-into a CLI flag (`--n-trials 50`, `--tune.max-epochs 200`) and the docstring under it into the
-help text."""
+"""Experiment settings. tyro turns each Config field into a CLI flag (`--n-trials 50`) and the
+docstring under it into the help text; everything else is fixed here."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, get_args
+from typing import Literal, NamedTuple, get_args
 
 RUNS = Path("runs")  # every output; paths are relative to the repo root
-RAW = Path("data/raw/muscatine_scada.csv")  # their SCADA-raw.csv; input of their pretreatment
-PROCESSED = Path("data/processed/SCADA-FINAL.csv")  # their pretreatment notebook's output
-SJ_PREDS = Path("runs/schroer_repro/schroer_mlp_test.csv")  # from scripts/run_schroer.py
-CODE_DIR = Path("reference/schroer2024")  # their code
 
 ModelName = Literal[
     "persistence",
@@ -27,40 +22,29 @@ ModelName = Literal[
 ]
 
 
-@dataclass
-class Training:
-    """How a model is trained: once with these settings while tuning, once while evaluating."""
+class Training(NamedTuple):
+    stride: int  # train / validate on every stride-th minute (test: every minute; ridge: always)
+    max_epochs: int  # recurrent models only
+    patience: int  # epochs without a better val RMSE before stopping
 
-    stride: int
-    """Train and validate on every stride-th minute (test: always every minute). Ridge always
-    fits on every minute, as in Schroer & Just's notebook."""
-    max_epochs: int
-    """Upper limit on training epochs for a recurrent model."""
-    patience: int
-    """Stop after this many epochs without a better validation RMSE."""
+
+# Tuning uses every 10th minute: neighbouring minutes are near-duplicates, so it finds the same
+# kind of models several times faster. Its epochs are 10x shorter, so it gets more of them and a
+# longer patience (at stride 1, 53-87 % of the epochs came after the best one).
+TUNE = Training(stride=10, max_epochs=200, patience=20)
+EVAL = Training(stride=1, max_epochs=50, patience=10)  # what the reported numbers come from
 
 
 @dataclass
 class Config:
     name: str = "main"
-    """Experiment name: outputs go to runs/<name>/, and it names the MLflow experiment."""
+    """Experiment name: runs/<name>/ and the MLflow experiment."""
     models: tuple[ModelName, ...] = get_args(ModelName)
     """Models to tune / evaluate."""
-    val_frac: float = 0.2
-    """Fraction of the training rows (the last ones) used for validation."""
     n_trials: int = 50
     """Optuna trials per tuned model (completed or pruned)."""
     seeds: tuple[int, ...] = tuple(range(1, 6))
     """Seeds each model is evaluated with."""
-    mlflow_uri: str = "sqlite:///runs/mlflow.db"
-    """MLflow tracking URI."""
-    tune: Training = field(default_factory=lambda: Training(stride=10, max_epochs=200, patience=20))
-    """Tuning. Neighbouring minutes are near-duplicates, so every 10th minute finds the same
-    kind of models several times faster; an epoch is then 10x shorter, so more of them are
-    allowed. At stride 1, 53-87 % of the epochs came after the best one (archived W&B run): a
-    shorter epoch needs a longer patience to see a real plateau."""
-    eval: Training = field(default_factory=lambda: Training(stride=1, max_epochs=50, patience=10))
-    """Evaluation: every model with every seed, using its best hyper-parameters."""
 
     @property
     def run_dir(self) -> Path:

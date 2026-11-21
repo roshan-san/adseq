@@ -9,7 +9,7 @@ cut off by a crash stays "running" and does not count. Run one process per model
 Pruning (MedianPruner, recurrent models only): after the first PRUNE_STARTUP finished trials, a
 trial stops early when its best val RMSE so far is worse than the median of earlier trials at the
 same epoch, checked every epoch once it has made PRUNE_WARMUP_PASSES passes over the training data
-(that many epochs x --tune.stride, so the warmup is the same amount of training at any stride).
+(that many epochs x TUNE.stride, so the warmup is the same amount of training at any stride).
 Its curve up to that point is kept; it never becomes the best trial. LightGBM trials are not
 pruned: early stopping already ends a poor one. The objective `val_rmse` is in scaled units
 (target min-max scaled on the training period); the `[tune]` line also prints it in ft^3/min.
@@ -51,7 +51,7 @@ from sklearn.metrics import (
     root_mean_squared_error,
 )
 
-from .config import SJ_PREDS, Config, ModelName
+from .config import EVAL, RUNS, TUNE, Config, ModelName
 from .data import Dataset
 from .models import MODELS, fit, predict, space
 
@@ -167,7 +167,7 @@ def open_study(cfg: Config, name: ModelName) -> optuna.Study:
         direction="minimize",
         load_if_exists=True,
         pruner=optuna.pruners.MedianPruner(
-            n_startup_trials=PRUNE_STARTUP, n_warmup_steps=PRUNE_WARMUP_PASSES * cfg.tune.stride
+            n_startup_trials=PRUNE_STARTUP, n_warmup_steps=PRUNE_WARMUP_PASSES * TUNE.stride
         ),
     )
     # seed 0 for a new study, so a run without interruptions can be replayed exactly; after a
@@ -188,7 +188,7 @@ def run_trial(trial: Trial, name: ModelName, ds: Dataset, cfg: Config) -> float:
         return pruned
 
     with child_run(f"trial-{trial.number}", trial=str(trial.number)):
-        _, info = fit(name, hp, ds, cfg.tune, seed=0, on_step=on_step)
+        _, info = fit(name, hp, ds, TUNE, seed=0, on_step=on_step)
         mlflow.log_params(hp)
         log_info(info)
         mlflow.set_tag("pruned", str(pruned).lower())
@@ -231,7 +231,7 @@ def evaluate(cfg: Config, ds: Dataset, name: ModelName) -> None:
     with eval_run(name):
         for seed in seeds:
             with child_run(f"seed-{seed}", seed=str(seed)):
-                fitted, info = fit(name, hp, ds, cfg.eval, seed)
+                fitted, info = fit(name, hp, ds, EVAL, seed)
                 pred = predict(fitted, name, hp, ds)
                 scores = {
                     s: regression_metrics(ds.y_true[ds.part(s)], pred[ds.part(s)], n_inputs)
@@ -249,6 +249,7 @@ def evaluate(cfg: Config, ds: Dataset, name: ModelName) -> None:
 
 # --- Schroer & Just's MLP -----------------------------------------------------------------------
 
+SJ_PREDS = RUNS / "schroer_repro" / "schroer_mlp_test.csv"  # from scripts/run_schroer.py
 SJ_INPUTS = 36  # inputs of their MLP, for its adjusted R2
 
 

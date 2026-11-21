@@ -23,7 +23,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
-# these must match adseq.config: copied, as this script runs in its own old environment
+# these must match adseq.data: copied, as this script runs in its own old environment
 REF = ROOT / "reference" / "schroer2024"
 RAW = ROOT / "data" / "raw" / "muscatine_scada.csv"  # = their SCADA-raw.csv
 PROCESSED = ROOT / "data" / "processed" / "SCADA-FINAL.csv"  # where adseq reads it
