@@ -11,7 +11,7 @@ import tyro
 from .config import Config
 from .data import PROCESSED, build_dataset, load_processed
 from .evaluate import evaluate
-from .models import TUNED_MODELS
+from .models import MODELS
 from .report import make_report
 from .tracking import start_tracking
 from .tune import tune
@@ -57,7 +57,7 @@ def tune_cmd(cfg: Cfg) -> None:
         load_processed(), cfg.val_frac, cfg.tune.stride
     )  # built once, shared by every model
     for name in cfg.models:
-        if name in TUNED_MODELS:
+        if MODELS[name].tuned:
             tune(cfg, ds, name)
 
 

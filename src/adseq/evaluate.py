@@ -12,11 +12,10 @@ import mlflow
 import numpy as np
 import pandas as pd
 
-from .config import Config
+from .config import Config, ModelName
 from .data import Dataset
-from .fit import fit, predict
 from .metrics import regression_metrics
-from .models import UNTUNED_MODELS
+from .models import MODELS, fit, predict
 from .tracking import best_params, child_run, eval_run, log_info, log_preds, log_test_summary
 
 SPLITS = ("train", "val", "test")
@@ -24,13 +23,13 @@ SJ_PREDS = Path("runs/schroer_repro/schroer_mlp_test.csv")  # from scripts/run_s
 SJ_INPUTS = 36  # inputs of their MLP, for its adjusted R2
 
 
-def evaluate(cfg: Config, ds: Dataset, name: str) -> None:
+def evaluate(cfg: Config, ds: Dataset, name: ModelName) -> None:
     """Fit the model with its best hyper-parameters once per seed (once for the deterministic
     baselines); log its metrics and predictions."""
-    if name == "sj_mlp":
+    if MODELS[name].family == "external":
         return import_sj_mlp(ds)
     hp = best_params(cfg, name)
-    seeds = cfg.seeds[:1] if name in UNTUNED_MODELS else cfg.seeds
+    seeds = cfg.seeds if MODELS[name].seeded else cfg.seeds[:1]
     n_inputs = 1 if name == "persistence" else ds.n_features  # for the adjusted R2
 
     preds, tests = [], []

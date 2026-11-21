@@ -25,9 +25,9 @@ import pandas as pd
 from mlflow.artifacts import download_artifacts, load_dict
 from mlflow.exceptions import MlflowException
 
-from .config import Config
+from .config import Config, ModelName
 from .data import Dataset
-from .models import UNTUNED_MODELS
+from .models import MODELS
 
 
 def start_tracking(cfg: Config) -> None:
@@ -81,11 +81,11 @@ def child_run(name: str, **tags: str) -> mlflow.ActiveRun:
     return mlflow.start_run(run_name=name, nested=True, tags=tags)
 
 
-def best_params(cfg: Config, model: str) -> dict:
+def best_params(cfg: Config, model: ModelName) -> dict:
     """The best trial's hyper-parameters, from tune/<model>'s best_params.json (an artifact, not
     params: params can't change, the best trial does when tuning goes on). {} for the untuned
     baselines, persistence and ridge."""
-    if model in UNTUNED_MODELS:
+    if not MODELS[model].tuned:
         return {}
     run_id = tune_parent_id(cfg, model)
     try:  # fails for no tune run (runs:/None/...) or one that crashed before its first finish

@@ -11,7 +11,7 @@ hyper-parameters (best_params.json) and best_val_rmse.
 Pruning (MedianPruner, recurrent models only): after the first PRUNE_STARTUP finished trials, a
 trial stops early when its best val RMSE so far is worse than the median of earlier trials at the
 same epoch, checked every epoch once it has made PRUNE_WARMUP_PASSES passes over the training data
-(that many epochs x --stride, so the warmup is the same amount of training at any stride). Its
+(that many epochs x --tune.stride, so the warmup is the same amount of training at any stride). Its
 curve up to that point is kept; it never becomes the best trial. LightGBM trials are not pruned: early stopping already ends a poor
 one.
 
@@ -25,10 +25,9 @@ from optuna.storages import JournalStorage
 from optuna.storages.journal import JournalFileBackend
 from optuna.trial import Trial, TrialState
 
-from .config import Config
-from .data import WINDOWS, Dataset
-from .fit import fit
-from .models import TREE_MODELS
+from .config import Config, ModelName
+from .data import Dataset
+from .models import fit, space
 from .tracking import child_run, log_info, tune_run
 
 PRUNE_STARTUP = 5  # finished trials before any pruning (Optuna's MedianPruner default)
@@ -38,33 +37,7 @@ PRUNE_WARMUP_PASSES = 3
 FINISHED = (TrialState.COMPLETE, TrialState.PRUNED)  # what counts towards --n-trials
 
 
-def suggest(trial: Trial, name: str) -> dict:
-    """Search space: the same ranges for every recurrent model; LightGBM's own for the trees
-    (same loss and window choices)."""
-    if name in TREE_MODELS:
-        return {
-            "lr": trial.suggest_float("lr", 5e-3, 0.2, log=True),
-            "num_leaves": trial.suggest_categorical("num_leaves", [7, 15, 31, 63, 127]),
-            "min_data_in_leaf": trial.suggest_categorical("min_data_in_leaf", [5, 10, 20, 50, 100]),
-            "feature_fraction": trial.suggest_float("feature_fraction", 0.1, 1.0),
-            "bagging_fraction": trial.suggest_float("bagging_fraction", 0.5, 1.0),
-            "lambda_l2": trial.suggest_float("lambda_l2", 1e-8, 10.0, log=True),
-            "loss": trial.suggest_categorical("loss", ["mse", "l1"]),
-            "window": trial.suggest_categorical("window", list(WINDOWS)),
-        }
-    return {
-        "lr": trial.suggest_float("lr", 1e-4, 1e-2, log=True),
-        "weight_decay": trial.suggest_float("weight_decay", 1e-7, 1e-2, log=True),
-        "batch_size": trial.suggest_categorical("batch_size", [64, 128, 256]),
-        "dropout": trial.suggest_float("dropout", 0.0, 0.4),
-        "loss": trial.suggest_categorical("loss", ["mse", "l1"]),
-        "hidden_size": trial.suggest_categorical("hidden_size", [16, 32, 64, 128]),
-        "num_layers": trial.suggest_int("num_layers", 1, 2),
-        "window": trial.suggest_categorical("window", list(WINDOWS)),
-    }
-
-
-def open_study(cfg: Config, name: str) -> optuna.Study:
+def open_study(cfg: Config, name: ModelName) -> optuna.Study:
     """The model's study, new or resumed from its journal file."""
     study_file = cfg.run_dir / "optuna" / f"{name}.log"
     study_file.parent.mkdir(exist_ok=True)
@@ -83,9 +56,9 @@ def open_study(cfg: Config, name: str) -> optuna.Study:
     return study
 
 
-def run_trial(trial: Trial, name: str, ds: Dataset, cfg: Config) -> float:
+def run_trial(trial: Trial, name: ModelName, ds: Dataset, cfg: Config) -> float:
     """Train one suggested configuration; its best val RMSE (or TrialPruned)."""
-    hp = suggest(trial, name)
+    hp = space(trial, name)
     pruned = False
 
     def on_step(epoch: int, best_so_far: float) -> bool:
@@ -104,7 +77,7 @@ def run_trial(trial: Trial, name: str, ds: Dataset, cfg: Config) -> float:
     return info["val_rmse_scaled"]
 
 
-def tune(cfg: Config, ds: Dataset, name: str) -> dict:
+def tune(cfg: Config, ds: Dataset, name: ModelName) -> dict:
     """Run the model's study up to --n-trials finished trials; log and return the best
     hyper-parameters (best_params.json on tune/<model>, typed, overwritten as tuning goes on)."""
     study = open_study(cfg, name)

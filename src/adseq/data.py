@@ -32,6 +32,7 @@ WINDOWS = (12, 24, 48, 72)  # hours of history a recurrent model may be tuned to
 MAX_WINDOW = max(WINDOWS)  # every sample has this much history, so any tuned window fits
 PROCESSED = Path("data/processed/SCADA-FINAL.csv")  # their pretreatment notebook's output
 MLP_DROPS = ["day_sin", "day_cos", "D2_TEMPERATURE", "Q-influent_MGD"]  # their SCADA-MLP, cell 0
+CHUNK = 4096  # samples per forward pass when predicting: all ~490k windows would not fit
 
 
 def load_processed() -> pd.DataFrame:
@@ -98,6 +99,11 @@ class Dataset:
             rows &= self.pos % self.stride == 0
         return np.flatnonzero(rows)
 
+    def base_level(self, residual: bool) -> np.ndarray:
+        """What a model's output is added to (scaled units): persistence for the residual models,
+        zero for the others."""
+        return self.scale(self.y_prev) if residual else np.zeros_like(self.y)
+
     def scale(self, y: np.ndarray) -> np.ndarray:
         """ft^3/min -> the scaled units the models are trained in."""
         return (y - self.y_offset) / self.y_scale
@@ -105,6 +111,11 @@ class Dataset:
     def unscale(self, y_scaled: np.ndarray) -> np.ndarray:
         """Scaled units -> ft^3/min."""
         return y_scaled * self.y_scale + self.y_offset
+
+
+def chunks(idx: np.ndarray) -> list[np.ndarray]:
+    """idx in pieces of about CHUNK samples."""
+    return np.array_split(idx, max(1, len(idx) // CHUNK))
 
 
 def build_dataset(df: pd.DataFrame, val_frac: float, stride: int) -> Dataset:
