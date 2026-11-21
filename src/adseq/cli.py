@@ -8,7 +8,7 @@ import tyro
 from mlflow.lightgbm import autolog as autolog_lightgbm
 
 from .config import EVAL, RUNS, TUNE, Config
-from .data import build_dataset, fetch, load_processed
+from .data import build_dataset, load_processed
 from .models import MODELS
 from .report import make_report
 from .run import evaluate, tune
@@ -25,13 +25,6 @@ def start_tracking(cfg: Config) -> None:
     mlflow.set_tracking_uri(MLFLOW_URI)
     mlflow.set_experiment(cfg.name)
     autolog_lightgbm(log_models=False, log_datasets=False, silent=True)
-
-
-def fetch_cmd(cfg: Cfg) -> None:
-    """Download SCADA-raw.csv (85 MB) and Schroer & Just's code, skipping whatever is already
-    there. Then run scripts/run_schroer.py (see its docstring) to build
-    data/processed/SCADA-FINAL.csv; the raw file is not downloaded once that exists."""
-    fetch()
 
 
 def tune_cmd(cfg: Cfg) -> None:
@@ -68,7 +61,6 @@ def run_all_cmd(cfg: Cfg) -> None:
 
 def main() -> None:
     commands = {
-        "fetch": fetch_cmd,
         "tune": tune_cmd,
         "evaluate": evaluate_cmd,
         "report": report_cmd,

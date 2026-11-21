@@ -17,14 +17,10 @@ A plain `uv sync` without an extra removes torch.
 
 ## Data
 
-```bash
-uv run adseq fetch
-```
-
-Downloads the raw SCADA data (85 MB, `data/raw/`) and Schroer & Just's code
-(`reference/schroer2024/`). Then run their notebooks, unmodified, to build the processed data set
-(`data/processed/SCADA-FINAL.csv`) and reproduce their MLP's test predictions. Their code needs an
-environment from its time, so it runs outside the project environment:
+One script downloads the raw SCADA data (85 MB, `data/raw/`) and Schroer & Just's code
+(`reference/schroer2024/`), then runs their notebooks, unmodified, to build the processed data
+set (`data/processed/SCADA-FINAL.csv`) and reproduce their MLP's test predictions. Their code
+needs an environment from its time, so it runs outside the project environment:
 
 ```bash
 uv run --no-project --with "pandas==2.1.4" --with "numpy<2" --with "scikit-learn==1.3.2" \

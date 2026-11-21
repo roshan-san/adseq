@@ -1,19 +1,18 @@
-"""Run Schroer & Just's (2024) own notebooks, unmodified, to rebuild their processed SCADA data
-set and reproduce their final MLP. Their code: reference/schroer2024 (doi:10.5281/zenodo.8360096).
-
-Each notebook's code cells are executed verbatim, in order, in the notebook's own folder (their
-relative paths), with a non-interactive plot backend. Their processed data set (SCADA-FINAL.csv)
-is moved to data/processed/, where adseq reads it, and linked back into their folder for their
-MLP notebook. Their SHAP / figure cells after the MLP
-metrics are not run (SHAP takes hours and is not needed). Run in an environment from their time (pandas 2.1; their code uses the
-since-removed freq='T' and fillna(method=...)):
+"""Setup: download the SCADA data and Schroer & Just's (2024) code (doi:10.5281/zenodo.8360096),
+then run their own notebooks, unmodified, to build their processed data set (moved to
+data/processed/, where adseq reads it) and reproduce their final MLP's test predictions. Their
+SHAP / figure cells are not run (hours, not needed). Needs an environment from their time
+(pandas 2.1: their code uses the since-removed freq='T' and fillna(method=...)):
 
     uv run --no-project --with "pandas==2.1.4" --with "numpy<2" --with "scikit-learn==1.3.2" \\
         --with matplotlib --with seaborn --with statsmodels python scripts/run_schroer.py
 """
 
+import io
 import json
 import os
+import urllib.request
+import zipfile
 from pathlib import Path
 
 import matplotlib
@@ -28,6 +27,12 @@ REF = ROOT / "reference" / "schroer2024"
 RAW = ROOT / "data" / "raw" / "muscatine_scada.csv"  # = their SCADA-raw.csv
 PROCESSED = ROOT / "data" / "processed" / "SCADA-FINAL.csv"  # where adseq reads it
 PREDS = ROOT / "runs" / "schroer_repro"
+
+# Public dataset: Muscatine, IA water resource recovery facility, minute SCADA data
+# 2022-03-18..2023-02-28. Schroer & Just (2024), doi:10.25820/data.006715, licence ODC-By 1.0.
+# Their code (MIT), doi:10.5281/zenodo.8360096 -> reference/schroer2024/
+CODE_URL = "https://zenodo.org/api/records/8360096/files/hunter-schroer/municipal-biogas-forecasting-v1.0.0.zip/content"
+SCADA_URL = "https://iro.uiowa.edu/view/fileRedirect?instCode=01IOWA_INST&filePid=13894605000002771&download=true"
 
 
 def run(notebook: str, cells: slice = slice(None)) -> dict:
@@ -57,6 +62,22 @@ def link(target: Path, name: Path) -> None:
         name.symlink_to(target)
 
 
+def download() -> None:
+    """The raw SCADA data (85 MB; not needed once PROCESSED exists) and their code, skipping
+    whatever is already there."""
+    if not PROCESSED.exists() and not RAW.exists():
+        RAW.parent.mkdir(parents=True, exist_ok=True)
+        part = RAW.with_suffix(".part")  # renamed only once complete
+        urllib.request.urlretrieve(SCADA_URL, part)
+        part.rename(RAW)
+    if not REF.exists():
+        with urllib.request.urlopen(CODE_URL) as r, zipfile.ZipFile(io.BytesIO(r.read())) as z:
+            top = z.namelist()[0].split("/")[0]
+            z.extractall(REF.parent)
+        (REF.parent / top).rename(REF)
+
+
+download()
 theirs = REF / "SCADA" / "SCADA-FINAL.csv"  # where their notebooks write / read it
 if not PROCESSED.exists():
     if not theirs.exists() or theirs.is_symlink():  # not built yet (else: built by an older layout)

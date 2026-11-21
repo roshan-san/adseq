@@ -17,9 +17,6 @@ Step 2, ours:
     minutes are near-duplicates); test is always scored on every minute
 """
 
-import io
-import urllib.request
-import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -27,9 +24,7 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
-RAW = Path("data/raw/muscatine_scada.csv")  # their SCADA-raw.csv; input of their pretreatment
 PROCESSED = Path("data/processed/SCADA-FINAL.csv")  # their pretreatment notebook's output
-CODE_DIR = Path("reference/schroer2024")  # their code
 VAL_FRAC = 0.2  # the last 20 % of the training rows validate
 TARGET = "Forecast"  # mean biogas flow over the next 24 h, ft^3/min (their name)
 PERSISTENCE = "Biogas_prev_hour_avg"  # mean of the previous clock hour (their baseline)
@@ -39,34 +34,6 @@ WINDOWS = (12, 24, 48, 72)  # hours of history a recurrent model may be tuned to
 MAX_WINDOW = max(WINDOWS)  # every sample has this much history, so any tuned window fits
 MLP_DROPS = ["day_sin", "day_cos", "D2_TEMPERATURE", "Q-influent_MGD"]  # their SCADA-MLP, cell 0
 CHUNK = 4096  # samples per forward pass when predicting: all ~490k windows would not fit
-
-
-# Public dataset: Muscatine, IA water resource recovery facility, minute SCADA data
-# 2022-03-18..2023-02-28. Schroer & Just (2024), doi:10.25820/data.006715, licence ODC-By 1.0.
-# Their code (MIT), doi:10.5281/zenodo.8360096 -> reference/schroer2024/
-CODE_URL = "https://zenodo.org/api/records/8360096/files/hunter-schroer/municipal-biogas-forecasting-v1.0.0.zip/content"
-SCADA_URL = "https://iro.uiowa.edu/view/fileRedirect?instCode=01IOWA_INST&filePid=13894605000002771&download=true"
-
-
-def fetch() -> None:
-    """Download SCADA-raw.csv (85 MB) and Schroer & Just's code, skipping whatever is already
-    there. Then run scripts/run_schroer.py (see its docstring) to build
-    data/processed/SCADA-FINAL.csv; the raw file is not downloaded once that exists."""
-    if PROCESSED.exists():
-        print(f"have {PROCESSED}; raw download not needed")
-    elif not RAW.exists():
-        RAW.parent.mkdir(parents=True, exist_ok=True)
-        part = RAW.with_suffix(".part")  # renamed only once complete
-        urllib.request.urlretrieve(SCADA_URL, part)
-        part.rename(RAW)
-        print(f"have {RAW}")
-
-    if not CODE_DIR.exists():
-        with urllib.request.urlopen(CODE_URL) as r, zipfile.ZipFile(io.BytesIO(r.read())) as z:
-            top = z.namelist()[0].split("/")[0]
-            z.extractall(CODE_DIR.parent)
-        (CODE_DIR.parent / top).rename(CODE_DIR)
-    print(f"have {CODE_DIR}")
 
 
 def load_processed() -> pd.DataFrame:
