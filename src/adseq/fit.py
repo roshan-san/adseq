@@ -16,12 +16,14 @@ The recurrent models train on the GPU when there is one (install the CUDA build 
 """
 
 import copy
+import time
 from collections.abc import Callable
 
 import lightgbm as lgb
 import mlflow
 import numpy as np
 import torch
+from mlflow.entities import Metric
 from sklearn.linear_model import RidgeCV
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.pipeline import Pipeline, make_pipeline
@@ -31,13 +33,13 @@ from torch import nn
 from .config import Config
 from .data import Dataset
 from .models import TREE_MODELS, RecurrentNet, is_residual, make_model
-from .tracking import log_lgbm_curve
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # recurrent models
 CHUNK = 4096  # samples per forward pass when predicting: all ~490k windows would not fit
 RIDGE_CV_GAP = 300  # their notebook: rows left out between each CV fold's train and val rows
 LGBM_MAX_ROUNDS = 5000
 LGBM_PATIENCE = 100  # boosting rounds without a better val RMSE
+MLFLOW_BATCH = 1000  # MLflow's maximum number of metrics per log_batch call
 
 # called after every epoch with (epoch, best val RMSE so far); returning True stops it (pruned)
 OnStep = Callable[[int, float], bool]
@@ -166,6 +168,20 @@ def fit_lgbm(name: str, hp: dict, ds: Dataset, seed: int) -> tuple[lgb.Booster, 
         "device": "cpu",
     }
     return booster, info
+
+
+def log_lgbm_curve(train_loss: list[float], val_rmse: list[float]) -> None:
+    """LightGBM's learning curve to the active run, one step per boosting round, logged once
+    after training: thousands of rounds, so sent in batches."""
+    run = mlflow.active_run()
+    assert run is not None  # fit is always called inside a trial or seed run
+    t = int(time.time() * 1000)
+    metrics = []
+    for step, (loss, rmse) in enumerate(zip(train_loss, val_rmse, strict=True), start=1):
+        metrics.append(Metric("epoch_train_loss", float(loss), t, step))
+        metrics.append(Metric("epoch_val_rmse", float(rmse), t, step))
+    for i in range(0, len(metrics), MLFLOW_BATCH):
+        mlflow.MlflowClient().log_batch(run.info.run_id, metrics=metrics[i : i + MLFLOW_BATCH])
 
 
 # --- recurrent --------------------------------------------------------------------------------

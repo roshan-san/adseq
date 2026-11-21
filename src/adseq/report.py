@@ -41,10 +41,12 @@ def summary_table(runs: pd.DataFrame) -> pd.DataFrame:
     return s.sort_values("model", key=lambda c: c.map(order)).reset_index(drop=True)
 
 
-def plot_test_predictions(cfg: Config, runs: dict[str, str], models=("sj_mlp", "gru_res")) -> None:
+def plot_test_predictions(
+    cfg: Config, run_ids: dict[str, str], models=("sj_mlp", "gru_res")
+) -> None:
     """Measured vs. predicted (mean over seeds) over the test period (single-column figure).
-    runs: model -> eval run_id."""
-    loaded = {name: load_preds(runs[name]) for name in models if name in runs}
+    run_ids: model -> its eval run."""
+    loaded = {name: load_preds(run_ids[name]) for name in models if name in run_ids}
     if not loaded:
         return
     plt.rcParams.update({"font.family": "serif", "font.size": 8, "pdf.fonttype": 42})
@@ -68,6 +70,7 @@ def plot_test_predictions(cfg: Config, runs: dict[str, str], models=("sj_mlp", "
 
 
 def make_report(cfg: Config) -> None:
+    """Table and figure from the newest FINISHED eval/<model> run of each model."""
     runs = latest_evals(cfg)
     if runs.empty:
         raise SystemExit(

@@ -1,4 +1,5 @@
-"""MLflow: the only store of results, and the only module that knows how they are laid out.
+"""MLflow: the only store of results, and the only module that knows how they are laid out
+(writers and readers in pairs; the LightGBM learning curve is logged by the model code).
 
 One experiment per --name, its artifacts in runs/mlartifacts/<name>/ (not ./mlruns):
 
@@ -16,21 +17,17 @@ Only parents carry the kind tag, so every lookup filters on it.
 
 import os
 import tempfile
-import time
 from pathlib import Path
 
 import mlflow
 import numpy as np
 import pandas as pd
 from mlflow.artifacts import download_artifacts, load_dict
-from mlflow.entities import Metric
 from mlflow.exceptions import MlflowException
 
 from .config import Config
 from .data import Dataset
 from .models import UNTUNED_MODELS
-
-BATCH_LIMIT = 1000  # MLflow's maximum number of metrics per log_batch call
 
 
 def start_tracking(cfg: Config) -> None:
@@ -54,20 +51,6 @@ def log_info(info: dict) -> None:
     """Training info to the active run: numbers as metrics, strings (the device) as tags."""
     mlflow.log_metrics({k: v for k, v in info.items() if not isinstance(v, str)})
     mlflow.set_tags({k: v for k, v in info.items() if isinstance(v, str)})
-
-
-def log_lgbm_curve(train_loss: list[float], val_rmse: list[float]) -> None:
-    """LightGBM's learning curve to the active run, one step per boosting round, logged once
-    after training: thousands of rounds, so sent in batches."""
-    t = int(time.time() * 1000)
-    metrics = []
-    for step, (loss, rmse) in enumerate(zip(train_loss, val_rmse, strict=True), start=1):
-        metrics.append(Metric("epoch_train_loss", float(loss), t, step))
-        metrics.append(Metric("epoch_val_rmse", float(rmse), t, step))
-    run = mlflow.active_run()
-    assert run is not None  # fit is always called inside a trial or seed run
-    for i in range(0, len(metrics), BATCH_LIMIT):
-        mlflow.MlflowClient().log_batch(run.info.run_id, metrics=metrics[i : i + BATCH_LIMIT])
 
 
 def tune_parent_id(cfg: Config, model: str) -> str | None:
