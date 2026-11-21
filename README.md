@@ -22,7 +22,7 @@ uv run prepare_data.py
 ```
 
 Once, before anything else. It downloads the raw SCADA data (85 MB, `data/raw/`) and Schroer &
-Just's code (`reference/schroer2024/`), runs their notebooks unmodified to build the data every
+Just's code (`references/schroer2024/`), runs their notebooks unmodified to build the data every
 model trains on (`data/processed/SCADA-FINAL.csv`), and reproduces their MLP's test predictions
 (`data/processed/schroer_mlp_test.csv`). Steps already done are skipped. Their code needs an
 environment from its time; the file declares it, and uv builds it.

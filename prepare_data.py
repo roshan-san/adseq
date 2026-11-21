@@ -12,7 +12,7 @@
 """Get the data and reproduce Schroer & Just's (2024) MLP: `uv run prepare_data.py`, once.
 
 1. download the raw SCADA data (Muscatine, IA WRRF)   -> data/raw/muscatine_scada.csv
-2. download their code (doi:10.5281/zenodo.8360096)     -> reference/schroer2024/
+2. download their code (doi:10.5281/zenodo.8360096)     -> references/schroer2024/
 3. run their SCADA-pretreatment notebook, unmodified   -> data/processed/SCADA-FINAL.csv
 4. run their SCADA-MLP notebook (cells 0-3), unmodified -> data/processed/schroer_mlp_test.csv
 
@@ -37,7 +37,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent
 # PROCESSED and SJ_PREDS must match adseq.data / adseq.report (adseq can't be imported here)
 RAW = ROOT / "data" / "raw" / "muscatine_scada.csv"
-CODE = ROOT / "reference" / "schroer2024"
+CODE = ROOT / "references" / "schroer2024"
 PROCESSED = ROOT / "data" / "processed" / "SCADA-FINAL.csv"
 SJ_PREDS = ROOT / "data" / "processed" / "schroer_mlp_test.csv"
 
