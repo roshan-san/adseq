@@ -21,10 +21,10 @@ MLflow is the only store of results; one experiment per --name, artifacts in MLf
 ./mlruns/:
 
   tune/<model>     best_val_rmse (scaled); artifact best_params.json. A new one per
-                   `adseq tune`: the Optuna study carries the trials across resumes, and
+                   `adseq run`: the Optuna study carries the trials across resumes, and
                    evaluate uses the newest FINISHED one.
     trial-<n>      tags trial, pruned; params = hyper-parameters; learning curve; fit info
-  eval/<model>     a new one per `adseq evaluate`; the report uses the newest FINISHED one per
+  eval/<model>     a new one per `adseq run`; the report uses the newest FINISHED one per
                    model. test_<metric>_mean / _std, n_seeds; artifact preds.npz (dates, split,
                    y_true, preds: seeds x samples)
     seed-<s>       params = seed + hyper-parameters; learning curve; fit info;
@@ -97,7 +97,7 @@ def best_params(cfg: Config, model: ModelName) -> dict:
     if runs.empty:
         raise LookupError(
             f"no tuned hyper-parameters for {model} in experiment {cfg.name}: "
-            f"run `adseq tune --name {cfg.name}` first"
+            f"run `adseq run --name {cfg.name}` first"
         )
     return load_dict(f"runs:/{runs.run_id.iloc[0]}/best_params.json")
 

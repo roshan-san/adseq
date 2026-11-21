@@ -109,7 +109,7 @@ def make_report(cfg: Config) -> None:
     runs = latest_evals(cfg)
     if runs.empty:
         raise SystemExit(
-            f"no finished evaluations in MLflow experiment {cfg.name}: run `adseq evaluate` first"
+            f"no finished evaluations in MLflow experiment {cfg.name}: run `adseq run` first"
         )
     run_ids = dict(zip(runs["model"], runs["run_id"], strict=True))
     ours = load_preds(run_ids.get("gru_res", runs["run_id"].iloc[0]))

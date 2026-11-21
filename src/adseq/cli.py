@@ -1,6 +1,7 @@
 """Command line (tyro). Run `uv run adseq --help` or `uv run adseq <command> --help`."""
 
 import os
+from dataclasses import replace
 from typing import Annotated
 
 import mlflow
@@ -26,23 +27,16 @@ def start_tracking(cfg: Config) -> None:
     autolog_lightgbm(log_models=False, log_datasets=False, silent=True)
 
 
-def tune_cmd(cfg: Cfg) -> None:
-    """Optuna search for every tuned model (same trial budget for all), with the TUNE settings."""
+def run_cmd(cfg: Cfg) -> None:
+    """For each model: tune it (TUNE settings; persistence and ridge have nothing to tune), then
+    evaluate it with every seed (EVAL settings). Re-running resumes tuning where it stopped."""
     start_tracking(cfg)
-    # built once, shared by every model
-    ds = build_dataset(load_processed(), TUNE.stride)
+    tune_ds = build_dataset(load_processed(), TUNE.stride)  # built once, shared by every model
+    eval_ds = replace(tune_ds, stride=EVAL.stride)  # the same samples, every minute
     for name in cfg.models:
         if name not in UNTUNED:
-            tune(cfg, ds, name)
-
-
-def evaluate_cmd(cfg: Cfg) -> None:
-    """Train each model with every seed using its best hyper-parameters; score on the test period."""
-    start_tracking(cfg)
-    # built once, shared by every model
-    ds = build_dataset(load_processed(), EVAL.stride)
-    for name in cfg.models:
-        evaluate(cfg, ds, name)
+            tune(cfg, tune_ds, name)
+        evaluate(cfg, eval_ds, name)
 
 
 def report_cmd(cfg: Cfg) -> None:
@@ -51,18 +45,5 @@ def report_cmd(cfg: Cfg) -> None:
     make_report(cfg)
 
 
-def run_all_cmd(cfg: Cfg) -> None:
-    """tune -> evaluate -> report."""
-    tune_cmd(cfg)
-    evaluate_cmd(cfg)
-    report_cmd(cfg)
-
-
 def main() -> None:
-    commands = {
-        "tune": tune_cmd,
-        "evaluate": evaluate_cmd,
-        "report": report_cmd,
-        "run-all": run_all_cmd,
-    }
-    tyro.extras.subcommand_cli_from_dict(commands)
+    tyro.extras.subcommand_cli_from_dict({"run": run_cmd, "report": report_cmd})

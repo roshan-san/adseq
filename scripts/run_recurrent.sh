@@ -28,8 +28,7 @@ uv run --no-sync python -c "import torch" ||
 pids=()
 for m in lstm_res lstm gru_res gru rnn_res rnn; do  # slowest first
   (export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
-   adseq tune --models "$m" "${FLAGS[@]}" &&
-     adseq evaluate --models "$m" "${FLAGS[@]}"
+   adseq run --models "$m" "${FLAGS[@]}"
   ) >"$LOGS/$m.log" 2>&1 &
   pids+=($!)
   echo "$(date +%H:%M) started $m (pid $!)"

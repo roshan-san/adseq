@@ -30,10 +30,8 @@ uv run --no-project --with "pandas==2.1.4" --with "numpy<2" --with "scikit-learn
 ## Run
 
 ```bash
-uv run adseq tune     --name main   # Optuna search per model -> MLflow tune/<model> runs
-uv run adseq evaluate --name main   # train with every seed, score -> MLflow eval/<model> runs
-uv run adseq report   --name main   # table + figure from MLflow -> runs/main/summary.csv, figures/
-uv run adseq run-all  --name main   # all three in sequence
+uv run adseq run    --name main   # per model: Optuna search -> tune/<model>, then every seed -> eval/<model>
+uv run adseq report --name main   # table + figure from MLflow -> runs/main/summary.csv, figures/
 ```
 
 Useful flags (all commands take the same ones; `uv run adseq <command> --help` lists them):
@@ -73,13 +71,13 @@ Every result is in MLflow (`runs/mlflow.db`, artifacts in MLflow's default `mlru
 experiment per `--name`:
 
 ```
-tune/<model>        best_val_rmse, best_params.json (best hyper-parameters); a new one per `tune`
+tune/<model>        best_val_rmse, best_params.json (best hyper-parameters); a new one per `run`
   trial-<n>         hyper-parameters, learning curve; tag pruned
 eval/<model>        test_<metric>_mean / _std over seeds, n_seeds, preds.npz (every seed's predictions)
   seed-<s>          hyper-parameters, learning curve, train / val / test metrics
 ```
 
-`evaluate` makes a new `eval/<model>` run each time; the report uses the newest finished one per
+`run` makes a new `eval/<model>` run each time; the report uses the newest finished one per
 model (a crashed evaluation is never used). The report adds Schroer & Just's MLP from
 `runs/schroer_repro/schroer_mlp_test.csv` (written by `scripts/run_schroer.py`), scored on the
 same test minutes.
