@@ -30,8 +30,9 @@ uv run --no-project --with "pandas==2.1.4" --with "numpy<2" --with "scikit-learn
 ## Run
 
 ```bash
-uv run adseq run    --name main   # per model: Optuna search -> tune/<model>, then every seed -> eval/<model>
-uv run adseq report --name main   # table + figure from MLflow -> runs/main/summary.csv, figures/
+uv run adseq tune     --name main   # Optuna search per model -> MLflow tune/<model> runs
+uv run adseq evaluate --name main   # train with every seed, score -> MLflow eval/<model> runs
+uv run adseq report   --name main   # table + figure from MLflow -> runs/main/summary.csv, figures/
 ```
 
 Useful flags (all commands take the same ones; `uv run adseq <command> --help` lists them):
@@ -50,14 +51,15 @@ Tuning resumes where it stopped: re-running continues each model's Optuna study 
 
 ```bash
 tmux new -s adseq                      # so it survives closing the terminal
+scripts/run_baselines.sh --name main   # persistence + ridge: a few minutes
 scripts/run_recurrent.sh --name main   # then Ctrl-b d to detach; `tmux attach -t adseq` to return
 scripts/run_lgbm.sh --name main        # once the recurrent models are done
 ```
 
-`run_recurrent.sh` tunes and evaluates the six recurrent models, one single-threaded process
-each. `run_lgbm.sh` tunes and evaluates LightGBM, then evaluates persistence, ridge and Schroer &
-Just's MLP, using every core. Run it after the recurrent models, alone: its flattened windows
-need several GB. Each script ends with the report, which leaves out models not run yet. Logs go
+`run_baselines.sh` evaluates persistence and ridge (nothing to tune). `run_recurrent.sh` tunes and
+evaluates the six recurrent models, one single-threaded process each. `run_lgbm.sh` tunes and
+evaluates LightGBM using every core; run it after the recurrent models, alone: its flattened
+windows need several GB. Each script ends with the report, which leaves out models not run yet. Logs go
 to `runs/logs/`; re-run a script to resume after a failure.
 
 Tuning trains and validates on every 10th minute, with longer epoch limits (`TUNE` in
@@ -71,13 +73,13 @@ Every result is in MLflow (`runs/mlflow.db`, artifacts in MLflow's default `mlru
 experiment per `--name`:
 
 ```
-tune/<model>        best_val_rmse, best_params.json (best hyper-parameters); a new one per `run`
+tune/<model>        best_val_rmse, best_params.json (best hyper-parameters); a new one per `tune`
   trial-<n>         hyper-parameters, learning curve; tag pruned
 eval/<model>        test_<metric>_mean / _std over seeds, n_seeds, preds.npz (every seed's predictions)
   seed-<s>          hyper-parameters, learning curve, train / val / test metrics
 ```
 
-`run` makes a new `eval/<model>` run each time; the report uses the newest finished one per
+`evaluate` makes a new `eval/<model>` run each time; the report uses the newest finished one per
 model (a crashed evaluation is never used). The report adds Schroer & Just's MLP from
 `runs/schroer_repro/schroer_mlp_test.csv` (written by `scripts/run_schroer.py`), scored on the
 same test minutes.

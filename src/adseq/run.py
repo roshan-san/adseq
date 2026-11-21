@@ -58,7 +58,7 @@ def best_params(cfg: Config, model: ModelName) -> dict:
     if runs.empty:
         raise LookupError(
             f"no tuned hyper-parameters for {model} in experiment {cfg.name}: "
-            f"run `adseq run --name {cfg.name}` first"
+            f"run `adseq tune --name {cfg.name}` first"
         )
     return load_dict(f"runs:/{runs.run_id.iloc[0]}/best_params.json")
 

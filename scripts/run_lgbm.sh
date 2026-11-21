@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Tune + evaluate LightGBM (lgbm_res, lgbm), evaluate the untuned baselines (persistence, ridge),
-# then write the report.
+# Tune + evaluate LightGBM (lgbm_res, lgbm), then write the report.
 #
 #   scripts/run_lgbm.sh [adseq flags, e.g. --name main --n-trials 20]
 #
@@ -19,9 +18,13 @@ LOGS=runs/logs
 mkdir -p "$LOGS"
 adseq() { uv run --no-sync adseq "$@"; }
 
-echo "$(date +%H:%M) tuning + evaluating lgbm_res lgbm, evaluating persistence ridge"
-adseq run --models lgbm_res lgbm persistence ridge "${FLAGS[@]}" >>"$LOGS/lgbm.log" 2>&1 ||
-  { echo "$(date +%H:%M) failed: see $LOGS/lgbm.log; re-run this script to resume"; exit 1; }
+echo "$(date +%H:%M) tuning lgbm_res lgbm"
+adseq tune --models lgbm_res lgbm "${FLAGS[@]}" >>"$LOGS/lgbm.log" 2>&1 ||
+  { echo "$(date +%H:%M) tuning failed: see $LOGS/lgbm.log; re-run this script to resume"; exit 1; }
+
+echo "$(date +%H:%M) evaluating lgbm_res lgbm"
+adseq evaluate --models lgbm_res lgbm "${FLAGS[@]}" >>"$LOGS/lgbm.log" 2>&1 ||
+  { echo "$(date +%H:%M) evaluation failed: see $LOGS/lgbm.log"; exit 1; }
 
 echo "$(date +%H:%M) done; writing the report (models not run yet are left out)"
 adseq report "${FLAGS[@]}"

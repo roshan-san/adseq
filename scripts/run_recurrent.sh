@@ -4,7 +4,7 @@
 #   scripts/run_recurrent.sh [adseq flags, e.g. --name main --n-trials 20]
 #
 # Run it inside tmux (`tmux new -s adseq`, detach with Ctrl-b d) so it survives closing the
-# terminal. LightGBM and the baselines: scripts/run_lgbm.sh, best run once this one is done, as
+# terminal. LightGBM: scripts/run_lgbm.sh, best run once this one is done, as
 # LightGBM's evaluation needs several GB next to these six processes.
 #
 # Each model gets its own process with ONE thread: these small RNNs train faster on one thread
@@ -28,7 +28,8 @@ uv run --no-sync python -c "import torch" ||
 pids=()
 for m in lstm_res lstm gru_res gru rnn_res rnn; do  # slowest first
   (export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
-   adseq run --models "$m" "${FLAGS[@]}"
+   adseq tune --models "$m" "${FLAGS[@]}" &&
+     adseq evaluate --models "$m" "${FLAGS[@]}"
   ) >"$LOGS/$m.log" 2>&1 &
   pids+=($!)
   echo "$(date +%H:%M) started $m (pid $!)"
