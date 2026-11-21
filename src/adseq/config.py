@@ -5,6 +5,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, get_args
 
+RUNS = Path("runs")  # every output; paths are relative to the repo root
+RAW = Path("data/raw/muscatine_scada.csv")  # their SCADA-raw.csv; input of their pretreatment
+PROCESSED = Path("data/processed/SCADA-FINAL.csv")  # their pretreatment notebook's output
+SJ_PREDS = Path("runs/schroer_repro/schroer_mlp_test.csv")  # from scripts/run_schroer.py
+CODE_DIR = Path("reference/schroer2024")  # their code
+
 ModelName = Literal[
     "persistence",
     "ridge",
@@ -57,6 +63,6 @@ class Config:
 
     @property
     def run_dir(self) -> Path:
-        d = Path("runs") / self.name
+        d = RUNS / self.name
         d.mkdir(parents=True, exist_ok=True)
         return d

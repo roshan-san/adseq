@@ -1,4 +1,5 @@
-"""Train a model with several seeds and score it on every split; import Schroer & Just's MLP.
+"""Train a model with several seeds and score it on every split (Schroer & Just's MLP is
+imported instead: schroer.py).
 
 Each call is a new eval/<model> MLflow run with one seed-<s> child per seed (learning curve,
 train/val/test metrics). The parent gets the test metrics' mean and std over seeds and every
@@ -6,21 +7,17 @@ seed's predictions (preds.npz); the report uses the newest FINISHED one per mode
 replaces the reported numbers and a crashed one never does.
 """
 
-from pathlib import Path
-
 import mlflow
 import numpy as np
-import pandas as pd
 
 from .config import Config, ModelName
 from .data import Dataset
 from .metrics import regression_metrics
 from .models import MODELS, fit, predict
+from .schroer import import_sj_mlp
 from .tracking import best_params, child_run, eval_run, log_info, log_preds, log_test_summary
 
 SPLITS = ("train", "val", "test")
-SJ_PREDS = Path("runs/schroer_repro/schroer_mlp_test.csv")  # from scripts/run_schroer.py
-SJ_INPUTS = 36  # inputs of their MLP, for its adjusted R2
 
 
 def evaluate(cfg: Config, ds: Dataset, name: ModelName) -> None:
@@ -50,23 +47,3 @@ def evaluate(cfg: Config, ds: Dataset, name: ModelName) -> None:
             print(f"[eval] {name:11s} seed={seed}  test RMSE={t['rmse']:.4g}  R2={t['r2']:.3f}")
         log_test_summary(tests)
         log_preds(ds, np.array(preds))
-
-
-def import_sj_mlp(ds: Dataset) -> None:
-    """Schroer & Just's MLP test predictions (their notebook's, via scripts/run_schroer.py) as an
-    eval/sj_mlp run laid out like ours: scored on our test samples, NaN elsewhere (their MLP is
-    only scored on test). Checks first that their test minutes and labels are ours."""
-    if not SJ_PREDS.exists():
-        print(f"[eval] sj_mlp: {SJ_PREDS} missing, skipped (run scripts/run_schroer.py)")
-        return
-    sj = pd.read_csv(SJ_PREDS, index_col=0, parse_dates=True)
-    te = ds.split == "test"
-    if not ds.dates[te].equals(sj.index) or not np.allclose(sj["y_true"], ds.y_true[te]):
-        raise ValueError("their MLP was scored on different test minutes or labels")
-    pred = np.full(len(te), np.nan)
-    pred[te] = sj["pred"].to_numpy()
-    t = regression_metrics(ds.y_true[te], pred[te], SJ_INPUTS)
-    with eval_run("sj_mlp"):
-        log_test_summary([t])
-        log_preds(ds, pred[None])
-    print(f"[eval] sj_mlp      (their code)  test RMSE={t['rmse']:.4g}  R2={t['r2']:.3f}")

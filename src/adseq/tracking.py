@@ -25,7 +25,7 @@ import pandas as pd
 from mlflow.artifacts import download_artifacts, load_dict
 from mlflow.exceptions import MlflowException
 
-from .config import Config, ModelName
+from .config import RUNS, Config, ModelName
 from .data import Dataset
 from .models import MODELS
 
@@ -33,11 +33,11 @@ from .models import MODELS
 def start_tracking(cfg: Config) -> None:
     """Log to cfg.mlflow_uri, in the experiment named --name (created with its artifact folder
     on first use)."""
-    Path("runs").mkdir(exist_ok=True)
+    RUNS.mkdir(exist_ok=True)
     os.environ.setdefault("MLFLOW_ENABLE_ARTIFACTS_PROGRESS_BAR", "false")  # no bars in the logs
     mlflow.set_tracking_uri(cfg.mlflow_uri)
     try:
-        artifacts = Path("runs/mlartifacts", cfg.name).resolve().as_uri()
+        artifacts = (RUNS / "mlartifacts" / cfg.name).resolve().as_uri()
         mlflow.create_experiment(cfg.name, artifact_location=artifacts)
     except MlflowException as e:
         # it exists (maybe another process of scripts/run_parallel.sh made it first); any other
