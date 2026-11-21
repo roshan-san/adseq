@@ -19,6 +19,7 @@ ModelName = Literal[
     "gru_res",
     "lstm_res",
 ]
+UNTUNED = ("persistence", "ridge")  # nothing to tune, same result for any seed: fitted once
 
 
 class Training(NamedTuple):

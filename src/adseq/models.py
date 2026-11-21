@@ -1,4 +1,4 @@
-"""The models: one row each in MODELS, and fit / predict / space for any of them.
+"""The models, and fit / predict / space for any of them, by name.
 
 persistence   next-24-h mean = mean of the previous clock hour (Schroer & Just's baseline)
 ridge         linear model on the 36 features of minute t, as in Schroer & Just's linear
@@ -25,8 +25,6 @@ one tree), always on the CPU.
 
 import copy
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Literal, get_args
 
 import lightgbm as lgb
 import mlflow
@@ -41,44 +39,6 @@ from torch import nn
 
 from .config import ModelName, Training
 from .data import WINDOWS, Dataset, chunks
-
-# --- table ---------------------------------------------------------------------------------
-
-Family = Literal["persistence", "ridge", "lgbm", "recurrent", "external"]
-
-
-@dataclass(frozen=True)
-class Spec:
-    label: str  # table / legend label
-    family: Family
-    residual: bool = False  # predicts the change from persistence
-
-    @property
-    def tuned(self) -> bool:
-        """Gets an Optuna study."""
-        return self.family in ("lgbm", "recurrent")
-
-    @property
-    def seeded(self) -> bool:
-        """Evaluated with every seed; the others give the same result for any seed, so one."""
-        return self.tuned
-
-
-MODELS: dict[ModelName, Spec] = {  # in table order
-    "persistence": Spec("Persistence", "persistence"),
-    "ridge": Spec("Ridge", "ridge"),
-    "lgbm": Spec("LightGBM", "lgbm"),
-    "lgbm_res": Spec("Res-LightGBM", "lgbm", residual=True),
-    "rnn": Spec("RNN", "recurrent"),
-    "gru": Spec("GRU", "recurrent"),
-    "lstm": Spec("LSTM", "recurrent"),
-    "rnn_res": Spec("Res-RNN (proposed)", "recurrent", residual=True),
-    "gru_res": Spec("Res-GRU (proposed)", "recurrent", residual=True),
-    "lstm_res": Spec("Res-LSTM (proposed)", "recurrent", residual=True),
-}
-if set(MODELS) != set(get_args(ModelName)):
-    raise RuntimeError("MODELS and config.ModelName must list the same models")
-
 
 # --- baselines -----------------------------------------------------------------------------
 
@@ -354,46 +314,28 @@ def fit(
 ) -> tuple[Fitted, dict]:
     """The fitted model and training info. on_step (recurrent models only) can stop the
     training early: Optuna pruning."""
-    spec = MODELS[name]
-    match spec.family:
-        case "persistence":
-            return None, {"epochs": 0, "n_params": 0}
-        case "ridge":
-            return fit_ridge(ds)
-        case "lgbm":
-            return fit_lgbm(spec.residual, hp, ds, seed)
-        case "recurrent":
-            cell = name.removesuffix("_res")
-            return fit_recurrent(cell, spec.residual, hp, ds, train, seed, on_step)
-        case "external":
-            raise ValueError(f"{name} is not trained here")
+    residual = name.endswith("_res")  # predicts the change from persistence
+    if name == "persistence":
+        return None, {"epochs": 0, "n_params": 0}
+    if name == "ridge":
+        return fit_ridge(ds)
+    if name.startswith("lgbm"):
+        return fit_lgbm(residual, hp, ds, seed)
+    return fit_recurrent(name.removesuffix("_res"), residual, hp, ds, train, seed, on_step)
 
 
 def predict(fitted: Fitted, name: ModelName, hp: dict, ds: Dataset) -> np.ndarray:
     """Predictions (ft^3/min) for every sample."""
-    spec = MODELS[name]
-    match spec.family:
-        case "persistence":
-            return predict_persistence(ds)
-        case "ridge":
-            assert isinstance(fitted, Pipeline)
-            return predict_ridge(fitted, ds)
-        case "lgbm":
-            assert isinstance(fitted, lgb.Booster)
-            return predict_lgbm(fitted, spec.residual, hp, ds)
-        case "recurrent":
-            assert isinstance(fitted, RecurrentNet)
-            return predict_recurrent(fitted, spec.residual, hp, ds)
-        case "external":
-            raise ValueError(f"{name} is not predicted here")
+    residual = name.endswith("_res")
+    if fitted is None:
+        return predict_persistence(ds)
+    if isinstance(fitted, Pipeline):
+        return predict_ridge(fitted, ds)
+    if isinstance(fitted, lgb.Booster):
+        return predict_lgbm(fitted, residual, hp, ds)
+    return predict_recurrent(fitted, residual, hp, ds)
 
 
 def space(trial: Trial, name: ModelName) -> dict:
     """The model's hyper-parameter search space."""
-    match MODELS[name].family:
-        case "lgbm":
-            return space_lgbm(trial)
-        case "recurrent":
-            return space_recurrent(trial)
-        case _:
-            raise ValueError(f"{name} is not tuned")
+    return space_lgbm(trial) if name.startswith("lgbm") else space_recurrent(trial)

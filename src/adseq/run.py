@@ -51,9 +51,9 @@ from sklearn.metrics import (
     root_mean_squared_error,
 )
 
-from .config import EVAL, TUNE, Config, ModelName
+from .config import EVAL, TUNE, UNTUNED, Config, ModelName
 from .data import Dataset
-from .models import MODELS, fit, predict, space
+from .models import fit, predict, space
 
 # --- MLflow -------------------------------------------------------------------------------------
 
@@ -91,7 +91,7 @@ def best_params(cfg: Config, model: ModelName) -> dict:
     """The best trial's hyper-parameters, from tune/<model>'s best_params.json (an artifact, not
     params: params can't change, the best trial does when tuning goes on). {} for the untuned
     baselines, persistence and ridge."""
-    if not MODELS[model].tuned:
+    if model in UNTUNED:
         return {}
     runs = finished_runs(cfg, f"tune/{model}")
     if runs.empty:
@@ -222,7 +222,7 @@ def evaluate(cfg: Config, ds: Dataset, name: ModelName) -> None:
     """Fit the model with its best hyper-parameters once per seed (once for the deterministic
     baselines); log its metrics and predictions."""
     hp = best_params(cfg, name)
-    seeds = cfg.seeds if MODELS[name].seeded else cfg.seeds[:1]
+    seeds = cfg.seeds[:1] if name in UNTUNED else cfg.seeds
     n_inputs = 1 if name == "persistence" else ds.n_features  # for the adjusted R2
 
     preds, tests = [], []

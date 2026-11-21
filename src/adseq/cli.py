@@ -7,9 +7,8 @@ import mlflow
 import tyro
 from mlflow.lightgbm import autolog as autolog_lightgbm
 
-from .config import EVAL, RUNS, TUNE, Config
+from .config import EVAL, RUNS, TUNE, UNTUNED, Config
 from .data import build_dataset, load_processed
-from .models import MODELS
 from .report import make_report
 from .run import evaluate, tune
 
@@ -33,7 +32,7 @@ def tune_cmd(cfg: Cfg) -> None:
     # built once, shared by every model
     ds = build_dataset(load_processed(), TUNE.stride)
     for name in cfg.models:
-        if MODELS[name].tuned:
+        if name not in UNTUNED:
             tune(cfg, ds, name)
 
 
