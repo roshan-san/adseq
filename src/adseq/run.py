@@ -15,7 +15,7 @@ pruned: early stopping already ends a poor one. The objective `val_rmse` is in s
 (target min-max scaled on the training period); the `[tune]` line also prints it in ft^3/min.
 
 Evaluation: each model is trained with every seed using its best hyper-parameters (once for the
-deterministic baselines) and scored on every split. Schroer & Just's MLP is imported instead.
+deterministic baselines) and scored on every split.
 
 MLflow is the only store of results; one experiment per --name, artifacts in MLflow's default
 ./mlruns/:
@@ -51,7 +51,7 @@ from sklearn.metrics import (
     root_mean_squared_error,
 )
 
-from .config import EVAL, RUNS, TUNE, Config, ModelName
+from .config import EVAL, TUNE, Config, ModelName
 from .data import Dataset
 from .models import MODELS, fit, predict, space
 
@@ -221,8 +221,6 @@ SPLITS = ("train", "val", "test")
 def evaluate(cfg: Config, ds: Dataset, name: ModelName) -> None:
     """Fit the model with its best hyper-parameters once per seed (once for the deterministic
     baselines); log its metrics and predictions."""
-    if MODELS[name].family == "external":
-        return import_sj_mlp(ds)
     hp = best_params(cfg, name)
     seeds = cfg.seeds if MODELS[name].seeded else cfg.seeds[:1]
     n_inputs = 1 if name == "persistence" else ds.n_features  # for the adjusted R2
@@ -245,29 +243,3 @@ def evaluate(cfg: Config, ds: Dataset, name: ModelName) -> None:
             print(f"[eval] {name:11s} seed={seed}  test RMSE={t['rmse']:.4g}  R2={t['r2']:.3f}")
         log_test_summary(tests)
         log_preds(ds, np.array(preds))
-
-
-# --- Schroer & Just's MLP -----------------------------------------------------------------------
-
-SJ_PREDS = RUNS / "schroer_repro" / "schroer_mlp_test.csv"  # from scripts/run_schroer.py
-SJ_INPUTS = 36  # inputs of their MLP, for its adjusted R2
-
-
-def import_sj_mlp(ds: Dataset) -> None:
-    """Schroer & Just's MLP test predictions (their notebook's, via scripts/run_schroer.py) as an
-    eval/sj_mlp run laid out like ours: scored on our test samples, NaN elsewhere (their MLP is
-    only scored on test). Checks first that their test minutes and labels are ours."""
-    if not SJ_PREDS.exists():
-        print(f"[eval] sj_mlp: {SJ_PREDS} missing, skipped (run scripts/run_schroer.py)")
-        return
-    sj = pd.read_csv(SJ_PREDS, index_col=0, parse_dates=True)
-    te = ds.split == "test"
-    if not ds.dates[te].equals(sj.index) or not np.allclose(sj["y_true"], ds.y_true[te]):
-        raise ValueError("their MLP was scored on different test minutes or labels")
-    pred = np.full(len(te), np.nan)
-    pred[te] = sj["pred"].to_numpy()
-    t = regression_metrics(ds.y_true[te], pred[te], SJ_INPUTS)
-    with eval_run("sj_mlp"):
-        log_test_summary([t])
-        log_preds(ds, pred[None])
-    print(f"[eval] sj_mlp      (their code)  test RMSE={t['rmse']:.4g}  R2={t['r2']:.3f}")

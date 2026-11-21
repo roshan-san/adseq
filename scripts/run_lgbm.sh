@@ -23,8 +23,8 @@ echo "$(date +%H:%M) tuning lgbm_res lgbm"
 adseq tune --models lgbm_res lgbm "${FLAGS[@]}" >>"$LOGS/lgbm.log" 2>&1 ||
   { echo "$(date +%H:%M) tuning failed: see $LOGS/lgbm.log; re-run this script to resume"; exit 1; }
 
-echo "$(date +%H:%M) evaluating lgbm_res lgbm persistence ridge sj_mlp"
-adseq evaluate --models lgbm_res lgbm persistence ridge sj_mlp "${FLAGS[@]}" >>"$LOGS/lgbm.log" 2>&1 ||
+echo "$(date +%H:%M) evaluating lgbm_res lgbm persistence ridge"
+adseq evaluate --models lgbm_res lgbm persistence ridge "${FLAGS[@]}" >>"$LOGS/lgbm.log" 2>&1 ||
   { echo "$(date +%H:%M) evaluation failed: see $LOGS/lgbm.log"; exit 1; }
 
 echo "$(date +%H:%M) done; writing the report (models not run yet are left out)"

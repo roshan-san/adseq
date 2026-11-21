@@ -80,8 +80,9 @@ eval/<model>        test_<metric>_mean / _std over seeds, n_seeds, preds.npz (ev
 ```
 
 `evaluate` makes a new `eval/<model>` run each time; the report uses the newest finished one per
-model (a crashed evaluation is never used). `sj_mlp` imports Schroer & Just's MLP predictions as
-an `eval/sj_mlp` run (`tune` skips it).
+model (a crashed evaluation is never used). The report adds Schroer & Just's MLP from
+`runs/schroer_repro/schroer_mlp_test.csv` (written by `scripts/run_schroer.py`), scored on the
+same test minutes.
 
 What stays in `runs/<name>/`:
 

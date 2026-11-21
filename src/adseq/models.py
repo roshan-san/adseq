@@ -10,8 +10,6 @@ lgbm_res      LightGBM predicting the change from persistence (ablation: does th
 rnn/gru/lstm  recurrent network over the last L hours -> its last hidden state -> one number
 *_res         proposed: the same network, but it predicts the *change* from persistence, which
               is then added back, so it only has to learn a correction
-sj_mlp        Schroer & Just's own MLP: run from their notebooks (scripts/run_schroer.py), its
-              test predictions imported by run.evaluate
 
 fit is always called inside an MLflow run (a tuning trial or an evaluation seed), which gets the
 learning curve: logged by the recurrent loop after every epoch (epoch_train_loss /
@@ -67,7 +65,6 @@ class Spec:
 
 
 MODELS: dict[ModelName, Spec] = {  # in table order
-    "sj_mlp": Spec("MLP, Schroer & Just (their code)", "external"),
     "persistence": Spec("Persistence", "persistence"),
     "ridge": Spec("Ridge", "ridge"),
     "lgbm": Spec("LightGBM", "lgbm"),
