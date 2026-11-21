@@ -2,22 +2,18 @@
 feature): lgbm, and lgbm_res predicting the change from persistence.
 
 Boosted with the same loss choice as the recurrent models and early stopping on the same
-validation RMSE (one "epoch" = one tree). Always on the CPU.
+validation RMSE (one "epoch" = one tree). Always on the CPU. Its learning curve and booster
+params are logged by mlflow.lightgbm.autolog (turned on in tracking.start_tracking).
 """
 
-import time
-
 import lightgbm as lgb
-import mlflow
 import numpy as np
-from mlflow.entities import Metric
 from optuna.trial import Trial
 
 from ..data import WINDOWS, Dataset, chunks
 
 LGBM_MAX_ROUNDS = 5000
 LGBM_PATIENCE = 100  # boosting rounds without a better val RMSE
-MLFLOW_BATCH = 1000  # MLflow's maximum number of metrics per log_batch call
 
 
 def space(trial: Trial) -> dict:
@@ -78,8 +74,7 @@ def fit(residual: bool, hp: dict, ds: Dataset, seed: int) -> tuple[lgb.Booster, 
     )
 
     best = booster.best_iteration
-    train_loss, val_rmse = evals["train"][loss], evals["val"]["rmse"]
-    log_curve(train_loss, val_rmse)
+    val_rmse = evals["val"]["rmse"]
     trees = booster.dump_model(num_iteration=best)["tree_info"]
     info = {
         "epochs": best,
@@ -88,20 +83,6 @@ def fit(residual: bool, hp: dict, ds: Dataset, seed: int) -> tuple[lgb.Booster, 
         "device": "cpu",
     }
     return booster, info
-
-
-def log_curve(train_loss: list[float], val_rmse: list[float]) -> None:
-    """The learning curve to the active run, one step per boosting round, logged once after
-    training: thousands of rounds, so sent in batches."""
-    run = mlflow.active_run()
-    assert run is not None  # fit is always called inside a trial or seed run
-    t = int(time.time() * 1000)
-    metrics = []
-    for step, (loss, rmse) in enumerate(zip(train_loss, val_rmse, strict=True), start=1):
-        metrics.append(Metric("epoch_train_loss", float(loss), t, step))
-        metrics.append(Metric("epoch_val_rmse", float(rmse), t, step))
-    for i in range(0, len(metrics), MLFLOW_BATCH):
-        mlflow.MlflowClient().log_batch(run.info.run_id, metrics=metrics[i : i + MLFLOW_BATCH])
 
 
 def predict(booster: lgb.Booster, residual: bool, hp: dict, ds: Dataset) -> np.ndarray:

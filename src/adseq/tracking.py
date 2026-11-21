@@ -1,18 +1,19 @@
 """MLflow: the only store of results, and the only module that knows how they are laid out
-(writers and readers in pairs; the LightGBM learning curve is logged by the model code).
+(writers and readers in pairs). LightGBM's learning curve comes from mlflow.lightgbm.autolog.
 
-One experiment per --name, its artifacts in runs/mlartifacts/<name>/ (not ./mlruns):
+One experiment per --name, artifacts in MLflow's default ./mlruns/:
 
-  tune/<model>     tags kind=tune, model; best_val_rmse (scaled); artifact best_params.json.
-                   One per model, reopened on every `adseq tune`, like its Optuna study.
+  tune/<model>     best_val_rmse (scaled); artifact best_params.json. A new one per
+                   `adseq tune`: the Optuna study carries the trials across resumes, and
+                   evaluate uses the newest FINISHED one.
     trial-<n>      tags trial, pruned; params = hyper-parameters; learning curve; fit info
-  eval/<model>     tags kind=eval, model; a new one per `adseq evaluate`; the report uses the
-                   newest FINISHED one per model. test_<metric>_mean / _std, n_seeds;
-                   artifact preds.npz (dates, split, y_true, preds: seeds x samples)
+  eval/<model>     a new one per `adseq evaluate`; the report uses the newest FINISHED one per
+                   model. test_<metric>_mean / _std, n_seeds; artifact preds.npz (dates, split,
+                   y_true, preds: seeds x samples)
     seed-<s>       params = seed + hyper-parameters; learning curve; fit info;
                    <split>_<metric> for train / val / test
 
-Only parents carry the kind tag, so every lookup filters on it.
+Every lookup is by run name.
 """
 
 import os
@@ -23,7 +24,7 @@ import mlflow
 import numpy as np
 import pandas as pd
 from mlflow.artifacts import download_artifacts, load_dict
-from mlflow.exceptions import MlflowException
+from mlflow.lightgbm import autolog as autolog_lightgbm
 
 from .config import RUNS, Config, ModelName
 from .data import Dataset
@@ -31,20 +32,12 @@ from .models import MODELS
 
 
 def start_tracking(cfg: Config) -> None:
-    """Log to cfg.mlflow_uri, in the experiment named --name (created with its artifact folder
-    on first use)."""
-    RUNS.mkdir(exist_ok=True)
+    """Log to cfg.mlflow_uri, in the experiment named --name; LightGBM logs its own curves."""
+    RUNS.mkdir(exist_ok=True)  # the default mlflow_uri's sqlite file lives there
     os.environ.setdefault("MLFLOW_ENABLE_ARTIFACTS_PROGRESS_BAR", "false")  # no bars in the logs
     mlflow.set_tracking_uri(cfg.mlflow_uri)
-    try:
-        artifacts = (RUNS / "mlartifacts" / cfg.name).resolve().as_uri()
-        mlflow.create_experiment(cfg.name, artifact_location=artifacts)
-    except MlflowException as e:
-        # it exists (maybe another process of scripts/run_recurrent.sh made it first); any other
-        # error stops here, else set_experiment would create it with artifacts in ./mlruns
-        if e.error_code != "RESOURCE_ALREADY_EXISTS":
-            raise
     mlflow.set_experiment(cfg.name)
+    autolog_lightgbm(log_models=False, log_datasets=False, silent=True)
 
 
 def log_info(info: dict) -> None:
@@ -53,27 +46,22 @@ def log_info(info: dict) -> None:
     mlflow.set_tags({k: v for k, v in info.items() if isinstance(v, str)})
 
 
-def tune_parent_id(cfg: Config, model: str) -> str | None:
-    """The model's tune/<model> run: the oldest one, so a stray duplicate never wins."""
-    runs = mlflow.search_runs(
+def finished_runs(cfg: Config, run_name: str) -> pd.DataFrame:
+    """The FINISHED runs named run_name, newest first: a crashed run is never used."""
+    return mlflow.search_runs(
         experiment_names=[cfg.name],
-        filter_string=f"tags.kind = 'tune' AND tags.model = '{model}'",
-        order_by=["attributes.start_time ASC"],
+        filter_string=f"tags.mlflow.runName = '{run_name}' AND attributes.status = 'FINISHED'",
+        order_by=["attributes.start_time DESC"],
     )
-    return None if runs.empty else runs.run_id.iloc[0]
 
 
-def tune_run(cfg: Config, model: str) -> mlflow.ActiveRun:
-    """Reopen the model's tune/<model> run, or start it: one per model, as its Optuna study."""
-    run_id = tune_parent_id(cfg, model)  # None: start it
-    tags = {"kind": "tune", "model": model}
-    return mlflow.start_run(run_id, run_name=f"tune/{model}", tags=tags)
+def tune_run(model: str) -> mlflow.ActiveRun:
+    return mlflow.start_run(run_name=f"tune/{model}")
 
 
 def eval_run(model: str) -> mlflow.ActiveRun:
-    """A new eval/<model> run. It ends FINISHED only if every seed did, so a crashed
-    evaluation is never reported."""
-    return mlflow.start_run(run_name=f"eval/{model}", tags={"kind": "eval", "model": model})
+    """It ends FINISHED only if every seed did, so a crashed evaluation is never reported."""
+    return mlflow.start_run(run_name=f"eval/{model}")
 
 
 def child_run(name: str, **tags: str) -> mlflow.ActiveRun:
@@ -87,14 +75,13 @@ def best_params(cfg: Config, model: ModelName) -> dict:
     baselines, persistence and ridge."""
     if not MODELS[model].tuned:
         return {}
-    run_id = tune_parent_id(cfg, model)
-    try:  # fails for no tune run (runs:/None/...) or one that crashed before its first finish
-        return load_dict(f"runs:/{run_id}/best_params.json")
-    except MlflowException as e:
+    runs = finished_runs(cfg, f"tune/{model}")
+    if runs.empty:
         raise LookupError(
             f"no tuned hyper-parameters for {model} in experiment {cfg.name}: "
             f"run `adseq tune --name {cfg.name}` first"
-        ) from e
+        )
+    return load_dict(f"runs:/{runs.run_id.iloc[0]}/best_params.json")
 
 
 def log_test_summary(tests: list[dict[str, float]]) -> None:
@@ -130,10 +117,14 @@ def load_preds(run_id: str) -> dict:
 
 
 def latest_evals(cfg: Config) -> pd.DataFrame:
-    """The newest FINISHED eval/<model> run of each model: what the report shows."""
+    """The newest FINISHED eval/<model> run of each model, with a model column: what the report
+    shows."""
     runs = mlflow.search_runs(
         experiment_names=[cfg.name],
-        filter_string="tags.kind = 'eval' AND attributes.status = 'FINISHED'",
+        filter_string="tags.mlflow.runName LIKE 'eval/%' AND attributes.status = 'FINISHED'",
         order_by=["attributes.start_time DESC"],
     )
-    return runs.drop_duplicates("tags.model") if not runs.empty else runs
+    if runs.empty:
+        return runs
+    runs["model"] = runs["tags.mlflow.runName"].str.removeprefix("eval/")
+    return runs.drop_duplicates("model")

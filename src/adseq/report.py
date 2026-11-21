@@ -20,7 +20,7 @@ def summary_table(runs: pd.DataFrame) -> pd.DataFrame:
     """Mean and std over seeds of every test metric, one row per model, in MODELS order, with
     the eval run each row comes from."""
     stats = [f"metrics.test_{m}_{stat}" for m in METRICS for stat in ("mean", "std")]
-    cols = ["tags.model", *stats, "metrics.n_seeds", "run_id"]
+    cols = ["model", *stats, "metrics.n_seeds", "run_id"]
     s = runs.filter(items=cols).rename(
         columns={c: c.split(".")[-1].removeprefix("test_") for c in cols}
     )
@@ -64,7 +64,7 @@ def make_report(cfg: Config) -> None:
         raise SystemExit(
             f"no finished evaluations in MLflow experiment {cfg.name}: run `adseq evaluate` first"
         )
-    missing = [name for name in MODELS if name not in set(runs["tags.model"])]
+    missing = [name for name in MODELS if name not in set(runs["model"])]
     if missing:
         print(f"[report] not run, left out: {', '.join(missing)}")
 

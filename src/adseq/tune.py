@@ -4,8 +4,8 @@ Every tuned model gets the same number of finished trials (--n-trials, completed
 trained with seed 0 and scored on the same validation samples. Each model's study is saved in
 runs/<name>/optuna/<model>.log, so re-running continues it: finished trials are kept, and a trial
 cut off by a crash stays "running" and does not count. Run one process per model at a time.
-Every trial is an MLflow run (tags trial, pruned) with its learning curve, nested under the
-model's tune/<model> run, which is reopened on a resume like the study and holds the best
+Every trial is an MLflow run (tags trial, pruned) with its learning curve, nested under a
+tune/<model> run (a new one each time, also on a resume), which ends with the whole study's best
 hyper-parameters (best_params.json) and best_val_rmse.
 
 Pruning (MedianPruner, recurrent models only): after the first PRUNE_STARTUP finished trials, a
@@ -82,7 +82,7 @@ def tune(cfg: Config, ds: Dataset, name: ModelName) -> dict:
     hyper-parameters (best_params.json on tune/<model>, typed, overwritten as tuning goes on)."""
     study = open_study(cfg, name)
     remaining = cfg.n_trials - len(study.get_trials(deepcopy=False, states=FINISHED))
-    with tune_run(cfg, name):
+    with tune_run(name):
         if remaining > 0:
             # a trial that raises stops the study with its traceback; re-run to continue
             study.optimize(lambda trial: run_trial(trial, name, ds, cfg), n_trials=remaining)

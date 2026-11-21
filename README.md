@@ -81,11 +81,11 @@ times faster. Evaluation, which produces the reported numbers, trains on every m
 
 ## Outputs
 
-Every result is in MLflow (`runs/mlflow.db`, artifacts in `runs/mlartifacts/<name>/`), one
+Every result is in MLflow (`runs/mlflow.db`, artifacts in MLflow's default `mlruns/`), one
 experiment per `--name`:
 
 ```
-tune/<model>        best_val_rmse, best_params.json (best hyper-parameters); reopened on resume
+tune/<model>        best_val_rmse, best_params.json (best hyper-parameters); a new one per `tune`
   trial-<n>         hyper-parameters, learning curve; tag pruned
 eval/<model>        test_<metric>_mean / _std over seeds, n_seeds, preds.npz (every seed's predictions)
   seed-<s>          hyper-parameters, learning curve, train / val / test metrics

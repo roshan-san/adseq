@@ -6,6 +6,7 @@ __pycache__/
 
 # experiment outputs: regenerate with `uv run adseq run-all --name <name>`
 runs/
+mlruns/
 docs/
 
 # downloaded data: `uv run adseq fetch`
