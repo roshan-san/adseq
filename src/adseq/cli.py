@@ -27,9 +27,8 @@ def tune_cmd(cfg: Cfg) -> None:
     """Optuna search for every tuned model (same trial budget for all), with the --tune.*
     stride and epoch limits."""
     start_tracking(cfg)
-    ds = build_dataset(
-        load_processed(), cfg.val_frac, cfg.tune.stride
-    )  # built once, shared by every model
+    # built once, shared by every model
+    ds = build_dataset(load_processed(), cfg.val_frac, cfg.tune.stride)
     for name in cfg.models:
         if MODELS[name].tuned:
             tune(cfg, ds, name)
@@ -38,9 +37,8 @@ def tune_cmd(cfg: Cfg) -> None:
 def evaluate_cmd(cfg: Cfg) -> None:
     """Train each model with every seed using its best hyper-parameters; score on the test period."""
     start_tracking(cfg)
-    ds = build_dataset(
-        load_processed(), cfg.val_frac, cfg.eval.stride
-    )  # built once, shared by every model
+    # built once, shared by every model
+    ds = build_dataset(load_processed(), cfg.val_frac, cfg.eval.stride)
     for name in cfg.models:
         evaluate(cfg, ds, name)
 

@@ -1,5 +1,6 @@
-"""Every experiment setting. tyro turns each field into a CLI flag (`--n-trials 50`,
-`--tune.max-epochs 200`) and the docstring under it into the help text."""
+"""Every experiment setting, and where the data and outputs live. tyro turns each Config field
+into a CLI flag (`--n-trials 50`, `--tune.max-epochs 200`) and the docstring under it into the
+help text."""
 
 from dataclasses import dataclass, field
 from pathlib import Path
