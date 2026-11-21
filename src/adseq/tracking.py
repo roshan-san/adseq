@@ -40,7 +40,7 @@ def start_tracking(cfg: Config) -> None:
         artifacts = (RUNS / "mlartifacts" / cfg.name).resolve().as_uri()
         mlflow.create_experiment(cfg.name, artifact_location=artifacts)
     except MlflowException as e:
-        # it exists (maybe another process of scripts/run_parallel.sh made it first); any other
+        # it exists (maybe another process of scripts/run_recurrent.sh made it first); any other
         # error stops here, else set_experiment would create it with artifacts in ./mlruns
         if e.error_code != "RESOURCE_ALREADY_EXISTS":
             raise

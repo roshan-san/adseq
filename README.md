@@ -61,17 +61,19 @@ uv run adseq run-all --name smoke --models persistence ridge gru_res --n-trials 
 Tuning resumes where it stopped: re-running continues each model's Optuna study from
 `runs/<name>/optuna/<model>.log`. Run one process per model at a time.
 
-### All models in parallel (CPU)
+### All models (CPU)
 
 ```bash
-tmux new -s adseq                     # so it survives closing the terminal
-scripts/run_parallel.sh --name main   # then Ctrl-b d to detach; `tmux attach -t adseq` to return
+tmux new -s adseq                      # so it survives closing the terminal
+scripts/run_recurrent.sh --name main   # then Ctrl-b d to detach; `tmux attach -t adseq` to return
+scripts/run_lgbm.sh --name main        # once the recurrent models are done
 ```
 
-One single-threaded process per recurrent model (tune, then evaluate) plus one tuning LightGBM;
-once those finish, LightGBM and the baselines are evaluated alone (their flattened windows need
-several GB), then the report. Logs go to `runs/logs/`; re-run the script to resume after a
-failure.
+`run_recurrent.sh` tunes and evaluates the six recurrent models, one single-threaded process
+each. `run_lgbm.sh` tunes and evaluates LightGBM, then evaluates persistence, ridge and Schroer &
+Just's MLP, using every core. Run it after the recurrent models, alone: its flattened windows
+need several GB. Each script ends with the report, which leaves out models not run yet. Logs go
+to `runs/logs/`; re-run a script to resume after a failure.
 
 Tuning trains and validates on every 10th minute, with longer epoch limits (the `--tune.*`
 settings): neighbouring minutes are near-duplicates, so it finds the same kind of models several
