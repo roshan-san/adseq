@@ -1,19 +1,29 @@
 """Command line (tyro). Run `uv run adseq --help` or `uv run adseq <command> --help`."""
 
+import os
 from typing import Annotated
 
+import mlflow
 import tyro
+from mlflow.lightgbm import autolog as autolog_lightgbm
 
-from .config import Config
+from .config import RUNS, Config
 from .data import build_dataset, fetch, load_processed
-from .evaluate import evaluate
 from .models import MODELS
 from .report import make_report
-from .tracking import start_tracking
-from .tune import tune
+from .run import evaluate, tune
 
 # flags read --n-trials instead of --cfg.n-trials
 Cfg = Annotated[Config, tyro.conf.arg(name="")]
+
+
+def start_tracking(cfg: Config) -> None:
+    """Log to cfg.mlflow_uri, in the experiment named --name; LightGBM logs its own curves."""
+    RUNS.mkdir(exist_ok=True)  # the default mlflow_uri's sqlite file lives there
+    os.environ.setdefault("MLFLOW_ENABLE_ARTIFACTS_PROGRESS_BAR", "false")  # no bars in the logs
+    mlflow.set_tracking_uri(cfg.mlflow_uri)
+    mlflow.set_experiment(cfg.name)
+    autolog_lightgbm(log_models=False, log_datasets=False, silent=True)
 
 
 def fetch_cmd(cfg: Cfg) -> None:

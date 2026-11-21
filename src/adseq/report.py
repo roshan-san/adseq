@@ -3,17 +3,43 @@ FINISHED eval/<model> MLflow run of each model. runs/<name>/summary.csv and figu
 for the paper, regenerated from MLflow at any time; summary.csv names each row's run_id.
 """
 
+import tempfile
+
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import mlflow
+import numpy as np
 import pandas as pd
+from mlflow.artifacts import download_artifacts
 
 from .config import Config
 from .models import MODELS
-from .tracking import latest_evals, load_preds
 
 METRICS = ["adj_r2", "mape", "rmse", "mae", "teei", "r2"]
+
+
+def load_preds(run_id: str) -> dict:
+    """An eval run's preds.npz: dates, split, y_true, preds (seeds x samples)."""
+    with tempfile.TemporaryDirectory() as d:
+        path = download_artifacts(run_id=run_id, artifact_path="preds.npz", dst_path=d)
+        with np.load(path) as f:
+            return dict(f)
+
+
+def latest_evals(cfg: Config) -> pd.DataFrame:
+    """The newest FINISHED eval/<model> run of each model, with a model column: what the report
+    shows."""
+    runs = mlflow.search_runs(
+        experiment_names=[cfg.name],
+        filter_string="tags.mlflow.runName LIKE 'eval/%' AND attributes.status = 'FINISHED'",
+        order_by=["attributes.start_time DESC"],
+    )
+    if runs.empty:
+        return runs
+    runs["model"] = runs["tags.mlflow.runName"].str.removeprefix("eval/")
+    return runs.drop_duplicates("model")
 
 
 def summary_table(runs: pd.DataFrame) -> pd.DataFrame:
