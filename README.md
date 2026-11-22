@@ -40,10 +40,10 @@ scripts/setup_and_run.sh
 
 The one script for every result. In order: install the environment (CUDA PyTorch when
 `nvidia-smi` works), build the data, evaluate the baselines (persistence, ridge, `sj_mlp`), tune
-and evaluate the six recurrent models in parallel, then LightGBM on its own (it needs several GB),
+and evaluate the six recurrent models (`AT_ONCE`, 3, at a time), then LightGBM on its own (it needs several GB),
 then write the report to `runs/main/`. Each step prints what it is doing; logs go to `runs/logs/`.
 
-To change what runs, edit the script: the settings (`NAME`, `TRIALS` 50, `SEEDS` 1–5) and the
+To change what runs, edit the script: the settings (`NAME`, `TRIALS` 50, `SEEDS` 1–5, `AT_ONCE` 3) and the
 model lists are at the top, one model per line, and the steps are listed at the bottom. Comment
 out a model or a step to skip it. Ctrl-C stops everything; re-run to resume. Watch progress with
 `scripts/mlflow_ui.sh` in a second terminal.

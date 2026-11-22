@@ -9,13 +9,14 @@ cd "$(dirname "$0")/.."
 NAME=main             # results: runs/$NAME/ and the MLflow experiment "$NAME"
 TRIALS=50             # Optuna trials per tuned model (evaluate needs this many finished)
 SEEDS=(1 2 3 4 5)     # evaluation seeds
+AT_ONCE=3             # recurrent models trained at the same time (6 ran out of memory on a laptop GPU)
 
 BASELINES=(           # nothing to tune: evaluated only
   persistence
   ridge
   sj_mlp
 )
-RECURRENT=(           # tuned then evaluated, all at the same time, sharing the CPU cores
+RECURRENT=(           # tuned then evaluated, AT_ONCE at a time, sharing the CPU cores
   rnn_res
   gru_res
   lstm_res
@@ -64,21 +65,28 @@ run_baselines() {
 
 run_recurrent() {
   [ ${#RECURRENT[@]} -gt 0 ] || return 0
-  local threads=$(( $(nproc) / ${#RECURRENT[@]} )) pids=() failed=0 m p
+  local at_once=$(( AT_ONCE < ${#RECURRENT[@]} ? AT_ONCE : ${#RECURRENT[@]} )) m failed
+  local threads=$(( $(nproc) / at_once ))
   [ "$threads" -ge 1 ] || threads=1
-  say "[recurrent] ${RECURRENT[*]}: $TRIALS trials, then seeds ${SEEDS[*]}, $threads threads each"
+  say "[recurrent] ${RECURRENT[*]}: $TRIALS trials, then seeds ${SEEDS[*]}"
+  say "[recurrent] $at_once at a time, $threads CPU threads each"
+  say "[recurrent] progress: scripts/mlflow_ui.sh in another window, then http://127.0.0.1:5000"
+  rm -f "$LOGS"/*.failed
   for m in "${RECURRENT[@]}"; do
+    while [ "$(jobs -rp | wc -l)" -ge "$at_once" ]; do wait -n || true; done  # a slot frees up
     (export OMP_NUM_THREADS=$threads MKL_NUM_THREADS=$threads
-     adseq tune --name "$NAME" --models "$m" --n-trials "$TRIALS" &&
-       adseq evaluate --name "$NAME" --models "$m" --n-trials "$TRIALS" --seeds "${SEEDS[@]}"
+     if ! { adseq tune --name "$NAME" --models "$m" --n-trials "$TRIALS" &&
+            adseq evaluate --name "$NAME" --models "$m" --n-trials "$TRIALS" --seeds "${SEEDS[@]}"; }
+     then touch "$LOGS/$m.failed"; fi
     ) >>"$LOGS/$m.log" 2>&1 &
-    pids+=($!)
     say "[recurrent] started $m (log: $LOGS/$m.log)"
     sleep 15  # each start loads the data (~0.8 GB peak): not all at once
   done
-  say "[recurrent] progress: scripts/mlflow_ui.sh in another window, then http://127.0.0.1:5000"
-  for p in "${pids[@]}"; do wait "$p" || failed=1; done
-  [ "$failed" = 0 ] || { say "a recurrent model failed: see $LOGS/; re-run to resume"; exit 1; }
+  wait
+  failed=""
+  for m in "${RECURRENT[@]}"; do [ ! -e "$LOGS/$m.failed" ] || failed+="$m "; done
+  [ -z "$failed" ] || { say "failed: $failed(see $LOGS/); re-run to resume"; exit 1; }
+  say "[recurrent] all finished"
 }
 
 run_lgbm() {
