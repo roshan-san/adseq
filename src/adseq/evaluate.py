@@ -27,10 +27,12 @@ SPLITS = ("train", "val", "test")
 # --- MLflow -------------------------------------------------------------------------------------
 
 
-def best_params(cfg: Config, model: ModelName) -> dict:
+def best_params(cfg: Config, ds: Dataset, model: ModelName) -> dict:
     """The best trial of its Optuna study, once that has --n-trials completed trials (a half-tuned
     model is never evaluated)."""
+    seeds = " ".join(map(str, cfg.seeds))
     if model in UNTUNED:
+        print(f"[eval] {model}: nothing to tune; seeds {seeds}")
         return {}
     study = open_study(cfg, model)
     if (done := n_done(study)) < cfg.n_trials:
@@ -38,7 +40,12 @@ def best_params(cfg: Config, model: ModelName) -> dict:
             f"{model}: {done}/{cfg.n_trials} trials tuned in {cfg.name}: run "
             f"`adseq tune --name {cfg.name} --models {model} --n-trials {cfg.n_trials}` first"
         )
-    return study.best_params
+    best = study.best_trial
+    print(
+        f"[eval] {model}: best of {done} trials is trial {best.number} "
+        f"(val RMSE {study.best_value * ds.y_scale:.2f} ft^3/min); seeds {seeds}"
+    )
+    return best.params
 
 
 def log_test_summary(tests: list[dict[str, float]]) -> None:
@@ -90,7 +97,7 @@ def regression_metrics(y: np.ndarray, p: np.ndarray, k: int = 1) -> dict[str, fl
 def evaluate(cfg: Config, ds: Dataset, name: ModelName) -> None:
     """Every seed. The run ends FINISHED only if every seed did, so a crashed evaluation is never
     reported."""
-    hp = best_params(cfg, name)
+    hp = best_params(cfg, ds, name)
     n_inputs = 1 if name == "persistence" else ds.n_features  # for the adjusted R2
 
     preds, tests = [], []
@@ -108,6 +115,9 @@ def evaluate(cfg: Config, ds: Dataset, name: ModelName) -> None:
                 mlflow.log_metrics({f"{s}_{k}": v for s, m in scores.items() for k, v in m.items()})
             preds.append(pred)
             tests.append(t := scores["test"])
-            print(f"[eval] {name:11s} seed={seed}  test RMSE={t['rmse']:.4g}  R2={t['r2']:.3f}")
+            print(f"[eval] {name} seed {seed}: test RMSE {t['rmse']:.2f}, R2 {t['r2']:.3f}")
         log_test_summary(tests)
+        rmse = pd.Series([t["rmse"] for t in tests])
+        spread = f" ± {rmse.std():.2f}" if len(rmse) > 1 else ""
+        print(f"[eval] {name}: done, test RMSE {rmse.mean():.2f}{spread} ft^3/min")
         log_preds(ds, np.array(preds))

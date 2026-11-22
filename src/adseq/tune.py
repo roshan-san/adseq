@@ -7,11 +7,15 @@ child per trial (hyper-parameters, learning curve, fit info).
 
 import mlflow
 import optuna
-from optuna.trial import Trial, TrialState
+from optuna.trial import FrozenTrial, Trial, TrialState
 
 from .config import TUNE, Config, ModelName
 from .data import Dataset
 from .models import fit, space
+
+optuna.logging.set_verbosity(
+    optuna.logging.WARNING
+)  # our own progress lines instead; failures still show
 
 
 def open_study(cfg: Config, name: ModelName) -> optuna.Study:
@@ -42,12 +46,32 @@ def tune(cfg: Config, ds: Dataset, name: ModelName) -> dict:
     """Up to --n-trials completed trials, seed 0 each."""
     study = open_study(cfg, name)
     done = n_done(study)
+
+    def progress(study: optuna.Study, trial: FrozenTrial) -> None:
+        if trial.state == TrialState.COMPLETE and trial.value is not None:
+            minutes = trial.duration.total_seconds() / 60 if trial.duration else float("nan")
+            print(
+                f"[tune] {name} trial {n_done(study)}/{cfg.n_trials}: "
+                f"val RMSE {trial.value * ds.y_scale:.2f}, "
+                f"best {study.best_value * ds.y_scale:.2f} ft^3/min ({minutes:.1f} min)"
+            )
+
+    if done < cfg.n_trials:
+        print(
+            f"[tune] {name}: {done}/{cfg.n_trials} trials done, running {cfg.n_trials - done} more"
+        )
+    else:
+        print(f"[tune] {name}: already tuned ({done}/{cfg.n_trials} trials)")
     with mlflow.start_run(run_name=f"tune/{name}"):
         if done < cfg.n_trials:
             # a trial that raises stops the study with its traceback; re-run to continue
-            study.optimize(lambda trial: run_trial(trial, name, ds), n_trials=cfg.n_trials - done)
+            study.optimize(
+                lambda trial: run_trial(trial, name, ds),
+                n_trials=cfg.n_trials - done,
+                callbacks=[progress],
+            )
         best, val = study.best_params, study.best_value
         mlflow.log_params(best)  # to look at; evaluate reads them, typed, from the study
         mlflow.log_metrics({"best_val_rmse_scaled": val, "best_val_rmse": val * ds.y_scale})
-    print(f"[tune] {name}: best val RMSE = {val * ds.y_scale:.2f} (scaled {val:.4f})  {best}")
+    print(f"[tune] {name}: done, best val RMSE {val * ds.y_scale:.2f} ft^3/min  {best}")
     return best
