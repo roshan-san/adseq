@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 # Everything for the paper's results from a fresh clone: environment (CUDA PyTorch when an NVIDIA
 # GPU is visible), data, baselines, MODELS tuned + evaluated in parallel, report. Re-run to resume.
-# Settings as env vars, e.g.  TRIALS=10 MODELS="gru_res gru lstm_res" scripts/run_paper.sh
+# Settings as env vars, e.g.  TRIALS=10 MODELS="gru_res gru" scripts/run_paper.sh
+# Ctrl-C stops everything; a re-run resumes.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 NAME=${NAME:-main}
 TRIALS=${TRIALS:-20}
 SEEDS=${SEEDS:-"1 2 3"}
-MODELS=${MODELS:-"gru_res gru"}
+MODELS=${MODELS:-"rnn_res gru_res lstm_res rnn gru lstm"}
 LOGS=runs/logs
 mkdir -p "$LOGS"
+trap 'trap - INT TERM; echo; echo "stopping every model"; kill 0' INT TERM  # background ones too
 
 say() { echo "$(date +%H:%M) $*"; }
 adseq() { uv run --no-sync adseq "$@"; }
@@ -36,7 +38,10 @@ say "evaluating the baselines (persistence, ridge, sj_mlp)"
 adseq evaluate --name "$NAME" --models persistence ridge sj_mlp --seeds $SEEDS \
   >>"$LOGS/baselines.log" 2>&1 || { say "failed: see $LOGS/baselines.log"; exit 1; }
 
-# 4. models: tune then evaluate, one process each, all at once
+# 4. models: tune then evaluate, one process each, all at once, sharing the CPU threads
+n_models=$(echo "$MODELS" | wc -w)
+threads=$(( $(nproc) / n_models )); [ "$threads" -ge 1 ] || threads=1
+export OMP_NUM_THREADS=$threads MKL_NUM_THREADS=$threads
 pids=()
 for m in $MODELS; do
   # shellcheck disable=SC2086
@@ -45,6 +50,7 @@ for m in $MODELS; do
   ) >>"$LOGS/$m.log" 2>&1 &
   pids+=($!)
   say "started $m: $TRIALS trials, then seeds $SEEDS (log: $LOGS/$m.log)"
+  sleep 15  # each start loads the data (~0.8 GB peak): not all at once
 done
 say "progress: scripts/mlflow_ui.sh in another window, then http://127.0.0.1:5000"
 failed=0

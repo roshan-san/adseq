@@ -39,9 +39,10 @@ scripts/run_paper.sh
 ```
 
 It installs the environment (CUDA PyTorch when `nvidia-smi` works), builds the data, evaluates the
-baselines, tunes and evaluates `gru_res` and `gru` in parallel, and writes the report to
-`runs/main/`. Re-run it to resume. Settings: `TRIALS` (20), `SEEDS` ("1 2 3"), `MODELS`
-("gru_res gru"), `NAME` (main), e.g. `TRIALS=10 MODELS="gru_res gru lstm_res" scripts/run_paper.sh`.
+baselines, tunes and evaluates the six recurrent models in parallel, and writes the report to
+`runs/main/`. Ctrl-C stops everything; re-run it to resume. Settings: `TRIALS` (20), `SEEDS`
+("1 2 3"), `MODELS` (all six recurrent), `NAME` (main), e.g. `TRIALS=10 MODELS="gru_res gru"
+scripts/run_paper.sh`.
 Watch progress with `scripts/mlflow_ui.sh` in a second terminal.
 
 ## Run
