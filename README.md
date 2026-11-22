@@ -18,7 +18,7 @@ A plain `uv sync` without an extra removes torch.
 On Windows, run everything in Git Bash (comes with Git for Windows); install uv from PowerShell
 with `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`.
 `.gitattributes` keeps the scripts' line endings bash-compatible. There is no tmux: keep the window
-open and the laptop awake (re-running a script resumes it).
+open and the laptop awake (re-running the script resumes it).
 
 ## Data
 
@@ -35,17 +35,20 @@ environment from its time; the file declares it, and uv builds it.
 
 ```bash
 git clone https://github.com/roshan-san/adseq.git && cd adseq
-scripts/run_paper.sh
+scripts/setup_and_run.sh
 ```
 
-It installs the environment (CUDA PyTorch when `nvidia-smi` works), builds the data, evaluates the
-baselines, tunes and evaluates the six recurrent models in parallel, and writes the report to
-`runs/main/`. Ctrl-C stops everything; re-run it to resume. Settings: `TRIALS` (20), `SEEDS`
-("1 2 3"), `MODELS` (all six recurrent), `NAME` (main), e.g. `TRIALS=10 MODELS="gru_res gru"
-scripts/run_paper.sh`.
-Watch progress with `scripts/mlflow_ui.sh` in a second terminal.
+The one script for every result. In order: install the environment (CUDA PyTorch when
+`nvidia-smi` works), build the data, evaluate the baselines (persistence, ridge, `sj_mlp`), tune
+and evaluate the six recurrent models in parallel, then LightGBM on its own (it needs several GB),
+then write the report to `runs/main/`. Each step prints what it is doing; logs go to `runs/logs/`.
 
-## Run
+To change what runs, edit the script: the settings (`NAME`, `TRIALS` 50, `SEEDS` 1–5) and the
+model lists are at the top, one model per line, and the steps are listed at the bottom. Comment
+out a model or a step to skip it. Ctrl-C stops everything; re-run to resume. Watch progress with
+`scripts/mlflow_ui.sh` in a second terminal.
+
+## Single commands by hand (what the script calls)
 
 ```bash
 uv run adseq tune     --name main   # Optuna search per model -> MLflow tune/<model> runs
@@ -64,22 +67,6 @@ Useful flags (all commands take the same ones; `uv run adseq <command> --help` l
 
 Tuning resumes where it stopped: re-running continues each model's Optuna study from
 `runs/<name>/optuna-<model>.db`. Run one process per model at a time.
-
-### All models (CPU)
-
-```bash
-tmux new -s adseq                      # so it survives closing the terminal
-scripts/run_baselines.sh --name main   # persistence, ridge, their MLP: a few minutes
-scripts/run_recurrent.sh --name main   # then Ctrl-b d to detach; `tmux attach -t adseq` to return
-scripts/run_lgbm.sh --name main        # once the recurrent models are done
-```
-
-`run_baselines.sh` evaluates persistence, ridge and Schroer & Just's MLP (`sj_mlp`, their
-settings: nothing to tune). `run_recurrent.sh` tunes and
-evaluates the six recurrent models, one single-threaded process each. `run_lgbm.sh` tunes and
-evaluates LightGBM using every core; run it after the recurrent models, alone: its flattened
-windows need several GB. Each script ends with the report, which leaves out models not run yet. Logs go
-to `runs/logs/`; re-run a script to resume after a failure.
 
 Tuning trains and validates on every 10th minute, with longer epoch limits (`TUNE` in
 `config.py`): neighbouring minutes are near-duplicates, so it finds the same kind of models
