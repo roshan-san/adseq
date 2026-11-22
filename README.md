@@ -47,7 +47,8 @@ uv run adseq evaluate --models persistence ridge sj_mlp
 ```
 
 **2. Recurrent models**: three Git Bash windows, one line each, all at the same time. Each tunes
-its two models, then evaluates them. Three at a time is what a laptop GPU's memory allows (six ran
+its two models, then evaluates them. Every trial trains 3 seeds, so tuning takes about 3× as long
+as one seed would. Three at a time is what a laptop GPU's memory allows (six ran
 out). Leave a window out to train those models later.
 
 ```bash
@@ -90,15 +91,40 @@ Defaults are in `src/adseq/config.py`; the commands above use them, so no flags 
 |---|---|---|
 | `--name` | `main` | output folder `runs/<name>/` and MLflow experiment; e.g. `--name test` for a trial run |
 | `--models` | all | which models a command runs |
-| `--n-trials` | 50 | Optuna trials per tuned model; if changed, pass the same to `tune` and `evaluate` |
+| `--n-trials` | 30 | Optuna trials per tuned model; if changed, pass the same to `tune` and `evaluate` |
+| `--trial-seeds` | 0 1 2 | seeds each trial trains with; it scores their mean val RMSE |
 | `--seeds` | 1 2 3 4 5 | evaluation seeds |
+| `--max-epochs` | `TUNE` / `EVAL` limits | caps the recurrent models' epochs in `tune` and `evaluate`; for test runs only |
+
+A quick test of the whole pipeline, then delete `runs/test/` and the `test` experiment (in the UI):
+
+```bash
+uv run adseq tune --name test --models rnn_res --n-trials 2 --trial-seeds 0 --max-epochs 3
+uv run adseq evaluate --name test --models rnn_res --n-trials 2 --seeds 1 --max-epochs 3
+uv run adseq report --name test
+```
 
 Tuning resumes from `runs/<name>/optuna-<model>.db`; never run the same model in two windows at once.
+A study tuned under an earlier protocol (`PROTOCOL` in `config.py`) is refused: tune again under a
+new `--name`. A study is continued only with the `--trial-seeds` it was started with.
 
-Tuning trains and validates on every 10th minute, with longer epoch limits (`TUNE` in
-`config.py`): neighbouring minutes are near-duplicates, so it finds the same kind of models
-several times faster. Evaluation (`EVAL`), which produces the reported numbers, trains on every
-minute.
+## Protocol
+
+- **Inputs.** Ridge and Schroer & Just's MLP see their 36 features at minute t. The recurrent
+  models and LightGBM see the 13 sensor readings as a sequence of hourly means (one per hour of
+  the window), plus the 23 features that already summarise the past (previous-hour and 24-h
+  means and their daily lags) and the time of day once, at t.
+- **Two fits per model and seed.** One on the train period alone, with val used only for early
+  stopping: the val metrics come from it, so every model, baselines included, is scored on val
+  data it never trained on. Then a refit on train + val (every pre-test minute) for the number of
+  epochs / boosting rounds the first fit stopped at; ridge and the MLP re-run their own selection
+  (RidgeCV, their early stopping), as in their notebooks. The test metrics come from the refit, so
+  every model has seen the same, most recent data before the test period.
+- **Tuning** trains and validates on every 10th minute (neighbouring minutes are near-duplicates),
+  evaluation on every minute. A recurrent epoch is 30,000 randomly drawn training windows in both
+  (`EPOCH_WINDOWS`), with the same limits (`TUNE`, `EVAL`), so an epoch count carries over from
+  tuning to evaluation and to the refit. Each trial is scored by its 3 seeds' mean val RMSE.
+- Model selection uses val only; the test period is scored once, by `evaluate`.
 
 ## Outputs
 
@@ -108,10 +134,20 @@ experiment per `--name`:
 ```
 tune/<model>        best_val_rmse (ft³/min), best_val_rmse_scaled, best hyper-parameters (params);
                     a new one per `tune`
-  trial-<n>         hyper-parameters, learning curve
-eval/<model>        test_<metric>_mean / _std over seeds, n_seeds, preds.npz (every seed's predictions)
-  seed-<s>          hyper-parameters, learning curve, train / val / test metrics
+  trial-<n>         hyper-parameters, val_rmse_scaled (mean over its seeds) and _std
+    seed-<s>        learning curve (below), best_epoch / best_round, val_rmse_scaled
+eval/<model>        val_ / test_<metric>_mean / _std over seeds, n_seeds, preds.npz (every
+                    seed's predictions)
+  seed-<s>          hyper-parameters, learning curve, train / val metrics (the fit on train) and
+                    test metrics (the refit)
+    refit           the refit on train + val: its training curve, epochs / rounds
 ```
+
+A recurrent model's learning curve has one step per epoch (30,000 training windows, then the val
+set): `epoch_train_mse_scaled`, `epoch_val_rmse_scaled` (what early stopping uses),
+`epoch_val_mae` (ft³/min) and `epoch_val_mape` (%). Step 0 is the untrained network; for a `_res`
+model that is exactly persistence, so the curve starts at the baseline it has to beat. LightGBM's
+curve (`val-rmse`, MLflow's autolog) has one step per boosting round.
 
 Metrics ending in `_scaled` are in the units the networks train in: biogas min-max scaled on the
 training period, so 1 = its range there (about 168 ft³/min); multiply an RMSE or MAE by that range
@@ -128,8 +164,17 @@ summary.csv                  the report's table, with the eval run_id of every r
 figures/test_predictions.pdf
 ```
 
-`summary.csv` and `figures/` are regenerated from MLflow by `adseq report`. Browse the runs with
+`summary.csv` (val and test, mean ± std over seeds) and `figures/` are regenerated from MLflow by
+`adseq report`. Browse the runs with
 `uv run adseq ui` (filter with `tags.mlflow.runName LIKE 'eval/%' AND attributes.status = 'FINISHED'`).
+
+## Future work
+
+- **Ridge as the residual base.** The `_res` models now learn the change from persistence, a weak
+  base (val RMSE about 25 ft³/min against ridge's about 20). With ridge's prediction as the base
+  instead, the recurrent network would only learn the temporal correction a single-minute linear
+  model misses. Ridge must then be fitted on the train rows only (as in the first fit), so the
+  residuals it leaves on train are as large as on unseen data.
 
 ## Development
 
@@ -144,4 +189,5 @@ uv run ruff format src && uv run ruff check src
 - Schroer, H. & Just, C. (2024), code: doi:10.5281/zenodo.8360096 (MIT). `sj_mlp` is their final
   SCADA MLP (`SCADA-MLP.ipynb`, cell 2). With their split and seed, adseq's version reproduces
   their test predictions (max difference 1e-13 ft³/min; MAPE 13.39 %, adj. R² 0.776; checked
-  2026-11-21). In adseq it trains on the same pre-test minutes and seeds as the other models.
+  2026-11-21). In adseq it is fitted and refitted like every other model (see Protocol), with the
+  same seeds.

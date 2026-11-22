@@ -52,12 +52,16 @@ def latest_evals(cfg: Config) -> pd.DataFrame:
 
 
 def summary_table(runs: pd.DataFrame) -> pd.DataFrame:
-    """One row per model, in NAMES order."""
-    stats = [f"metrics.test_{m}_{stat}" for m in METRICS for stat in ("mean", "std")]
+    """One row per model, in NAMES order: <split>_<metric>_mean / _std over seeds, for val and
+    test."""
+    stats = [
+        f"metrics.{split}_{m}_{stat}"
+        for split in ("val", "test")
+        for m in METRICS
+        for stat in ("mean", "std")
+    ]
     cols = ["model", *stats, "metrics.n_seeds", "run_id"]
-    s = runs.filter(items=cols).rename(
-        columns={c: c.split(".")[-1].removeprefix("test_") for c in cols}
-    )
+    s = runs.filter(items=cols).rename(columns={c: c.removeprefix("metrics.") for c in cols})
     s = s.astype({"n_seeds": int})
     order = {name: i for i, name in enumerate(NAMES)}
     return s.sort_values("model", key=lambda c: c.map(order)).reset_index(drop=True)
@@ -99,6 +103,13 @@ def make_report(cfg: Config) -> None:
     s = summary_table(runs)
     s.to_csv(cfg.run_dir / "summary.csv", index=False)
     plot_test_predictions(cfg, run_ids)
-    show = s[["model", "adj_r2_mean", "mape_mean", "rmse_mean", "teei_mean", "n_seeds"]]
+    shown = [
+        "val_rmse_mean",
+        "val_mape_mean",
+        "test_adj_r2_mean",
+        "test_mape_mean",
+        "test_rmse_mean",
+    ]
+    show = s.filter(items=["model", *shown, "test_teei_mean", "n_seeds"])
     print(show.round(4).to_string(index=False))
     print(f"\nSaved to {cfg.run_dir}: summary.csv, figures/")
