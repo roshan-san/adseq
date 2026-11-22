@@ -45,8 +45,11 @@ then write the report to `runs/main/`. Each step prints what it is doing; logs g
 
 To change what runs, edit the script: the settings (`NAME`, `TRIALS` 50, `SEEDS` 1–5, `AT_ONCE` 3) and the
 model lists are at the top, one model per line, and the steps are listed at the bottom. Comment
-out a model or a step to skip it. Ctrl-C stops everything; re-run to resume. Watch progress with
-`scripts/mlflow_ui.sh` in a second terminal.
+out a model or a step to skip it. Ctrl-C stops everything; re-run to resume.
+
+The script also opens MLflow: watch progress at http://127.0.0.1:5000 while it runs (set
+`MLFLOW_PORT` to 5001 if 5000 is taken). When it finishes, or a model fails, MLflow stays open
+until you press Ctrl-C. To look at results later without training, run `scripts/mlflow_ui.sh`.
 
 ## Single commands by hand (what the script calls)
 
