@@ -1,12 +1,3 @@
-"""Optuna search per model, the same number of completed trials for every model, resumable from
-runs/<name>/optuna-<model>.db (a file per model, so models can be tuned in parallel), which is
-also where evaluate reads the best hyper-parameters. A trial trains once per --trial-seeds seed
-and scores their mean val RMSE, so one lucky seed does not pick the hyper-parameters. MLflow: a
-tune/<model> run (the best hyper-parameters as params, best_val_rmse in ft^3/min and
-best_val_rmse_scaled) with a trial-<n> child per trial (hyper-parameters, mean and std of the
-seeds' val RMSE), and a seed-<s> child of that per seed (learning curve, fit info).
-"""
-
 import mlflow
 import numpy as np
 import optuna
@@ -16,23 +7,17 @@ from .config import PROTOCOL, TUNE, Config, ModelName, Training
 from .data import Dataset
 from .models import fit, space
 
-optuna.logging.set_verbosity(
-    optuna.logging.WARNING
-)  # our own progress lines instead; failures still show
+optuna.logging.set_verbosity(optuna.logging.WARNING)
 
 
 def open_study(cfg: Config, name: ModelName) -> optuna.Study:
-    """Created empty if new, stamped with PROTOCOL and the trial seeds; TPE sampler, seeded. One tuned under another
-    PROTOCOL is refused: its trials are not comparable with this code's."""
     path = cfg.run_dir / f"optuna-{name}.db"
     study = optuna.create_study(
         study_name=name,
-        storage=f"sqlite:///{path.as_posix()}",  # / on Windows too
+        storage=f"sqlite:///{path.as_posix()}",
         direction="minimize",
         load_if_exists=True,
     )
-    # seeded, so a search is reproducible; by the trials already there, so a resumed search does
-    # not redraw the first trials' random hyper-parameters
     study.sampler = optuna.samplers.TPESampler(seed=len(study.trials))
     stamp = {"protocol": PROTOCOL, "trial_seeds": list(cfg.trial_seeds)}
     if not study.trials:
@@ -53,7 +38,6 @@ def n_done(study: optuna.Study) -> int:
 def run_trial(
     trial: Trial, name: ModelName, ds: Dataset, train: Training, seeds: tuple[int, ...]
 ) -> float:
-    """The mean over seeds of each one's best val RMSE (scaled)."""
     hp = space(trial, name)
     with mlflow.start_run(run_name=f"trial-{trial.number}", nested=True):
         mlflow.log_params(hp)
@@ -69,7 +53,6 @@ def run_trial(
 
 
 def tune(cfg: Config, ds: Dataset, name: ModelName) -> dict:
-    """Up to --n-trials completed trials, --trial-seeds seeds each."""
     study = open_study(cfg, name)
     done = n_done(study)
     if done and (seeds := study.user_attrs.get("trial_seeds")) != list(cfg.trial_seeds):
@@ -92,14 +75,13 @@ def tune(cfg: Config, ds: Dataset, name: ModelName) -> dict:
         print(f"[tune] {name}: already tuned ({done}/{cfg.n_trials} trials)")
     with mlflow.start_run(run_name=f"tune/{name}"):
         if done < cfg.n_trials:
-            # a trial that raises stops the study with its traceback; re-run to continue
             study.optimize(
                 lambda trial: run_trial(trial, name, ds, cfg.training(TUNE), cfg.trial_seeds),
                 n_trials=cfg.n_trials - done,
                 callbacks=[progress],
             )
         best, val = study.best_params, study.best_value
-        mlflow.log_params(best)  # to look at; evaluate reads them, typed, from the study
+        mlflow.log_params(best)
         mlflow.log_metrics({"best_val_rmse_scaled": val, "best_val_rmse": val * ds.y_scale})
     print(f"[tune] {name}: done, best val RMSE {val * ds.y_scale:.2f} ft^3/min  {best}")
     return best

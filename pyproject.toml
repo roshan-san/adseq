@@ -25,10 +25,6 @@ dev = ["ruff>=0.8"]
 requires = ["uv_build>=0.13.7,<0.14.0"]
 build-backend = "uv_build"
 
-# PyTorch build, chosen per machine (the code is the same):
-#   uv sync --extra cpu     no NVIDIA GPU (small; no CUDA)
-#   uv sync --extra cu132   NVIDIA GPU (CUDA 13.2 build; nvidia-smi must show "CUDA Version" >= 13.2)
-# A plain `uv sync` without either removes torch.
 [project.optional-dependencies]
 cpu = ["torch>=2.5"]
 cu132 = ["torch>=2.5"]
@@ -55,14 +51,13 @@ explicit = true
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-src = ["src"]  # else stray run dirs in the root count as first-party
+src = ["src"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "NPY", "RUF"]
-ignore = ["E501", "SIM905"]  # SIM905: allow "a b c".split() for name lists
+ignore = ["E501", "SIM905"]
 
 [tool.pyright]
-# the IDE (Pylance) reads this too: use the project venv, skip downloaded third-party code
 venvPath = "."
 venv = ".venv"
 exclude = ["references", "data", "runs", "mlruns", ".venv"]

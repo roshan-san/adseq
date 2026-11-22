@@ -9,3 +9,10 @@ docs/
 
 data/
 references/
+
+arc/
+*.zip
+*.pdf
+*.pptx
+*.docx
+*.txt

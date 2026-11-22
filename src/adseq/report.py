@@ -1,6 +1,3 @@
-"""runs/<name>/summary.csv and figures/: views for the paper, read from MLflow only (the newest
-finished eval/<model> runs) and rebuilt at any time. Everything else: the MLflow UI."""
-
 import tempfile
 
 import matplotlib
@@ -14,7 +11,7 @@ from mlflow.artifacts import download_artifacts
 
 from .config import Config
 
-NAMES = {  # table / legend label of every model, in table order
+NAMES = {
     "sj_mlp": "MLP, Schroer & Just (retrained)",
     "persistence": "Persistence",
     "ridge": "Ridge",
@@ -28,7 +25,7 @@ NAMES = {  # table / legend label of every model, in table order
     "lstm_res": "Res-LSTM (proposed)",
 }
 METRICS = ["adj_r2", "mape", "rmse", "mae", "teei", "r2"]
-PLOTTED = ("sj_mlp", "gru_res")  # the figure's curves, when evaluated
+PLOTTED = ("sj_mlp", "gru_res")
 
 
 def load_preds(run_id: str) -> dict:
@@ -39,7 +36,6 @@ def load_preds(run_id: str) -> dict:
 
 
 def latest_evals(cfg: Config) -> pd.DataFrame:
-    """The newest FINISHED eval/<model> run of each model."""
     runs = mlflow.search_runs(
         experiment_names=[cfg.name],
         filter_string="tags.mlflow.runName LIKE 'eval/%' AND attributes.status = 'FINISHED'",
@@ -52,8 +48,6 @@ def latest_evals(cfg: Config) -> pd.DataFrame:
 
 
 def summary_table(runs: pd.DataFrame) -> pd.DataFrame:
-    """One row per model, in NAMES order: <split>_<metric>_mean / _std over seeds, for val and
-    test."""
     stats = [
         f"metrics.{split}_{m}_{stat}"
         for split in ("val", "test")
@@ -68,7 +62,6 @@ def summary_table(runs: pd.DataFrame) -> pd.DataFrame:
 
 
 def plot_test_predictions(cfg: Config, run_ids: dict[str, str]) -> None:
-    """Measured vs. the PLOTTED models (mean over seeds) over the test period, single-column."""
     shown = {name: load_preds(run_ids[name]) for name in PLOTTED if name in run_ids}
     ref = next(iter(shown.values())) if shown else load_preds(next(iter(run_ids.values())))
     te = ref["split"] == "test"
