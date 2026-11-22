@@ -33,7 +33,7 @@ def fit_ridge(ds: Dataset) -> tuple[Pipeline, dict]:
     model = make_pipeline(StandardScaler(), RidgeCV(cv=TimeSeriesSplit(gap=RIDGE_CV_GAP)))
     model.fit(ds.X[rows].astype(float), ds.y_true[rows])
     ridge = model.named_steps["ridgecv"]
-    info = {"epochs": 0, "alpha": float(ridge.alpha_), "n_params": ridge.coef_.size + 1}
+    info = {"alpha": float(ridge.alpha_), "n_params": ridge.coef_.size + 1}
     return model, info
 
 
@@ -62,7 +62,7 @@ def fit_sj_mlp(ds: Dataset, seed: int) -> tuple[Pipeline, dict]:
     model.fit(ds.X[rows].astype(float), ds.y_true[rows].astype(float))
     mlp = model.named_steps["mlpregressor"]
     n_params = sum(w.size for w in mlp.coefs_) + sum(b.size for b in mlp.intercepts_)
-    return model, {"epochs": mlp.n_iter_, "n_params": n_params}
+    return model, {"epochs_run": mlp.n_iter_, "n_params": n_params}
 
 
 # --- LightGBM ------------------------------------------------------------------------------
@@ -115,7 +115,7 @@ def fit_lgbm(residual: bool, hp: dict, ds: Dataset, seed: int) -> tuple[lgb.Boos
     best = booster.best_iteration
     trees = booster.dump_model(num_iteration=best)["tree_info"]
     info = {
-        "epochs": best,
+        "best_round": best,
         "val_rmse_scaled": booster.best_score["val"]["rmse"],
         "n_params": sum(t["num_leaves"] for t in trees),  # one fitted value per leaf
     }
@@ -231,7 +231,9 @@ def fit_recurrent(
     for epoch in range(1, train.max_epochs + 1):
         train_loss = train_epoch()
         rmse = val_rmse()
-        mlflow.log_metrics({"epoch_train_loss": train_loss, "epoch_val_rmse": rmse}, step=epoch)
+        mlflow.log_metrics(
+            {"epoch_train_mse_scaled": train_loss, "epoch_val_rmse_scaled": rmse}, step=epoch
+        )
         if rmse < best_rmse:
             best_rmse, best_state, best_epoch = rmse, copy.deepcopy(model.state_dict()), epoch
         if epoch - best_epoch >= train.patience:
@@ -239,7 +241,7 @@ def fit_recurrent(
 
     model.load_state_dict(best_state)
     info = {
-        "epochs": best_epoch,
+        "best_epoch": best_epoch,
         "val_rmse_scaled": best_rmse,
         "n_params": sum(p.numel() for p in model.parameters()),
     }
@@ -272,7 +274,7 @@ def fit(
 ) -> tuple[Fitted, dict]:
     residual = name.endswith("_res")
     if name == "persistence":
-        return None, {"epochs": 0, "n_params": 0}
+        return None, {"n_params": 0}
     if name == "ridge":
         return fit_ridge(ds)
     if name == "sj_mlp":

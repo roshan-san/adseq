@@ -82,11 +82,16 @@ Every result is in MLflow (`runs/mlflow.db`, artifacts in MLflow's default `mlru
 experiment per `--name`:
 
 ```
-tune/<model>        best_val_rmse, best hyper-parameters (params); a new one per `tune`
+tune/<model>        best_val_rmse (ft³/min), best_val_rmse_scaled, best hyper-parameters (params);
+                    a new one per `tune`
   trial-<n>         hyper-parameters, learning curve
 eval/<model>        test_<metric>_mean / _std over seeds, n_seeds, preds.npz (every seed's predictions)
   seed-<s>          hyper-parameters, learning curve, train / val / test metrics
 ```
+
+Metrics ending in `_scaled` are in the units the networks train in: biogas min-max scaled on the
+training period, so 1 = its range there (about 168 ft³/min); multiply an RMSE or MAE by that range
+for ft³/min. Every other metric is in ft³/min (or %, or unitless for R² and TeEI).
 
 `evaluate` makes a new `eval/<model>` run each time; the report uses the newest finished one per
 model (a crashed evaluation is never used), and reads nothing but MLflow.

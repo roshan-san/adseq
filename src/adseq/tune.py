@@ -1,8 +1,8 @@
 """Optuna search per model, the same number of completed trials for every model, resumable from
 runs/<name>/optuna-<model>.db (a file per model, so models can be tuned in parallel), which is
 also where evaluate reads the best hyper-parameters. MLflow: a tune/<model> run (the best
-hyper-parameters as params, best_val_rmse) with a trial-<n> child per trial (hyper-parameters,
-learning curve, fit info).
+hyper-parameters as params, best_val_rmse in ft^3/min and best_val_rmse_scaled) with a trial-<n>
+child per trial (hyper-parameters, learning curve, fit info).
 """
 
 import mlflow
@@ -48,6 +48,6 @@ def tune(cfg: Config, ds: Dataset, name: ModelName) -> dict:
             study.optimize(lambda trial: run_trial(trial, name, ds), n_trials=cfg.n_trials - done)
         best, val = study.best_params, study.best_value
         mlflow.log_params(best)  # to look at; evaluate reads them, typed, from the study
-        mlflow.log_metric("best_val_rmse", val)  # scaled units, as the objective
+        mlflow.log_metrics({"best_val_rmse_scaled": val, "best_val_rmse": val * ds.y_scale})
     print(f"[tune] {name}: best val RMSE = {val * ds.y_scale:.2f} (scaled {val:.4f})  {best}")
     return best
