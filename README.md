@@ -31,6 +31,19 @@ Just's code (`references/schroer2024/`), runs their pretreatment notebook unmodi
 data every model trains on (`data/processed/SCADA-FINAL.csv`). Steps already done are skipped. Their code needs an
 environment from its time; the file declares it, and uv builds it.
 
+## Quick start: everything in one command
+
+```bash
+git clone https://github.com/roshan-san/adseq.git && cd adseq
+scripts/run_paper.sh
+```
+
+It installs the environment (CUDA PyTorch when `nvidia-smi` works), builds the data, evaluates the
+baselines, tunes and evaluates `gru_res` and `gru` in parallel, and writes the report to
+`runs/main/`. Re-run it to resume. Settings: `TRIALS` (20), `SEEDS` ("1 2 3"), `MODELS`
+("gru_res gru"), `NAME` (main), e.g. `TRIALS=10 MODELS="gru_res gru lstm_res" scripts/run_paper.sh`.
+Watch progress with `scripts/mlflow_ui.sh` in a second terminal.
+
 ## Run
 
 ```bash
