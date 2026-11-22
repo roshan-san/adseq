@@ -15,6 +15,11 @@ uv sync --extra cu132   # NVIDIA GPU (nvidia-smi must show CUDA Version >= 13.2)
 
 A plain `uv sync` without an extra removes torch.
 
+On Windows, run everything in Git Bash (comes with Git for Windows); install uv from PowerShell
+with `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`.
+`.gitattributes` keeps the scripts' line endings bash-compatible. There is no tmux: keep the window
+open and the laptop awake (re-running a script resumes it).
+
 ## Data
 
 ```bash
@@ -44,7 +49,7 @@ Useful flags (all commands take the same ones; `uv run adseq <command> --help` l
 | `--seeds` | 1 2 3 4 5 | evaluation seeds |
 
 Tuning resumes where it stopped: re-running continues each model's Optuna study from
-`runs/<name>/optuna/<model>.log`. Run one process per model at a time.
+`runs/<name>/optuna-<model>.db`. Run one process per model at a time.
 
 ### All models (CPU)
 
@@ -73,8 +78,8 @@ Every result is in MLflow (`runs/mlflow.db`, artifacts in MLflow's default `mlru
 experiment per `--name`:
 
 ```
-tune/<model>        best_val_rmse, best_params.json (best hyper-parameters); a new one per `tune`
-  trial-<n>         hyper-parameters, learning curve; tag pruned
+tune/<model>        best_val_rmse, best hyper-parameters (params); a new one per `tune`
+  trial-<n>         hyper-parameters, learning curve
 eval/<model>        test_<metric>_mean / _std over seeds, n_seeds, preds.npz (every seed's predictions)
   seed-<s>          hyper-parameters, learning curve, train / val / test metrics
 ```
@@ -85,16 +90,16 @@ model (a crashed evaluation is never used), and reads nothing but MLflow.
 What stays in `runs/<name>/`:
 
 ```
-optuna/<model>.log           Optuna study (resume state)
+optuna-<model>.db            Optuna study (resume state; evaluate reads the best hyper-parameters)
 summary.csv                  the report's table, with the eval run_id of every row
 figures/test_predictions.pdf
 ```
 
 `summary.csv` and `figures/` are regenerated from MLflow by `adseq report`. Browse the runs
-(filter with `tags.mlflow.runName LIKE 'eval/%'`):
+(filter with `tags.mlflow.runName LIKE 'eval/%' AND attributes.status = 'FINISHED'`):
 
 ```bash
-uv run mlflow ui --backend-store-uri sqlite:///runs/mlflow.db
+scripts/mlflow_ui.sh   # http://127.0.0.1:5000; --port 5001 if 5000 is taken
 ```
 
 ## Development

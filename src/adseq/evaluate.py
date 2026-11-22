@@ -1,7 +1,7 @@
 """Train each model with every seed using its best hyper-parameters, and score every split.
 MLflow: an eval/<model> run (test_<metric>_mean/_std over seeds, preds.npz) with a seed-<s> child
-per seed (hyper-parameters, learning curve, every split's metrics). Lookups go by run name,
-FINISHED runs only, newest first.
+per seed (hyper-parameters, learning curve, every split's metrics). The best hyper-parameters come
+from the model's Optuna study.
 """
 
 import tempfile
@@ -10,7 +10,6 @@ from pathlib import Path
 import mlflow
 import numpy as np
 import pandas as pd
-from mlflow.artifacts import load_dict
 from sklearn.metrics import (
     mean_absolute_error,
     mean_absolute_percentage_error,
@@ -18,35 +17,28 @@ from sklearn.metrics import (
     root_mean_squared_error,
 )
 
-from .config import EVAL, ONE_SEED, UNTUNED, Config, ModelName
+from .config import EVAL, UNTUNED, Config, ModelName
 from .data import Dataset
-from .models import fit, log_info, predict
+from .models import fit, predict
+from .tune import n_done, open_study
 
 SPLITS = ("train", "val", "test")
 
 # --- MLflow -------------------------------------------------------------------------------------
 
 
-def finished_runs(cfg: Config, run_name: str) -> pd.DataFrame:
-    """Newest first; a crashed run is never used."""
-    return mlflow.search_runs(
-        experiment_names=[cfg.name],
-        filter_string=f"tags.mlflow.runName = '{run_name}' AND attributes.status = 'FINISHED'",
-        order_by=["attributes.start_time DESC"],
-    )
-
-
 def best_params(cfg: Config, model: ModelName) -> dict:
-    """An artifact, not params: they would come back as strings."""
+    """The best trial of its Optuna study, once that has --n-trials completed trials (a half-tuned
+    model is never evaluated)."""
     if model in UNTUNED:
         return {}
-    runs = finished_runs(cfg, f"tune/{model}")
-    if runs.empty:
+    study = open_study(cfg, model)
+    if (done := n_done(study)) < cfg.n_trials:
         raise LookupError(
-            f"no tuned hyper-parameters for {model} in experiment {cfg.name}: "
-            f"run `adseq tune --name {cfg.name}` first"
+            f"{model}: {done}/{cfg.n_trials} trials tuned in {cfg.name}: run "
+            f"`adseq tune --name {cfg.name} --models {model} --n-trials {cfg.n_trials}` first"
         )
-    return load_dict(f"runs:/{runs.run_id.iloc[0]}/best_params.json")
+    return study.best_params
 
 
 def log_test_summary(tests: list[dict[str, float]]) -> None:
@@ -96,15 +88,14 @@ def regression_metrics(y: np.ndarray, p: np.ndarray, k: int = 1) -> dict[str, fl
 
 
 def evaluate(cfg: Config, ds: Dataset, name: ModelName) -> None:
-    """Every seed (one for ONE_SEED models: the same result for any seed). The run ends
-    FINISHED only if every seed did, so a crashed evaluation is never reported."""
+    """Every seed. The run ends FINISHED only if every seed did, so a crashed evaluation is never
+    reported."""
     hp = best_params(cfg, name)
-    seeds = cfg.seeds[:1] if name in ONE_SEED else cfg.seeds
     n_inputs = 1 if name == "persistence" else ds.n_features  # for the adjusted R2
 
     preds, tests = [], []
     with mlflow.start_run(run_name=f"eval/{name}"):
-        for seed in seeds:
+        for seed in cfg.seeds:
             with mlflow.start_run(run_name=f"seed-{seed}", nested=True, tags={"seed": str(seed)}):
                 fitted, info = fit(name, hp, ds, EVAL, seed)
                 pred = predict(fitted, name, hp, ds)
@@ -113,7 +104,7 @@ def evaluate(cfg: Config, ds: Dataset, name: ModelName) -> None:
                     for s in SPLITS
                 }
                 mlflow.log_params({"seed": seed, **hp})
-                log_info(info)
+                mlflow.log_metrics(info)
                 mlflow.log_metrics({f"{s}_{k}": v for s, m in scores.items() for k, v in m.items()})
             preds.append(pred)
             tests.append(t := scores["test"])

@@ -19,7 +19,7 @@ dependencies = [
 adseq = "adseq.cli:main"
 
 [dependency-groups]
-dev = ["ruff>=0.8", "pytest>=8.3"]
+dev = ["ruff>=0.8"]
 
 [build-system]
 requires = ["uv_build>=0.13.7,<0.14.0"]

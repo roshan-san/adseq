@@ -30,7 +30,6 @@ ModelName = Literal[
 ]
 
 UNTUNED = ("persistence", "ridge", "sj_mlp")  # nothing to tune
-ONE_SEED = ("persistence", "ridge")  # deterministic: one seed
 
 
 @dataclass

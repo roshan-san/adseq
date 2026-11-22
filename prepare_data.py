@@ -24,6 +24,7 @@ own and isn't part of the adseq package.
 import io
 import json
 import os
+import shutil
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -45,16 +46,17 @@ SCADA_URL = "https://iro.uiowa.edu/view/fileRedirect?instCode=01IOWA_INST&filePi
 CODE_URL = "https://zenodo.org/api/records/8360096/files/hunter-schroer/municipal-biogas-forecasting-v1.0.0.zip/content"
 
 
-def run(notebook: str, cells: slice = slice(None)) -> dict:
-    """Their notebook's code cells, verbatim, in its own folder (their relative paths); returns
-    their variables."""
+def run(notebook: str) -> None:
+    """Their notebook's code cells, verbatim, in its own folder (their relative paths)."""
     path = CODE / notebook
-    code = [c for c in json.loads(path.read_text())["cells"] if c["cell_type"] == "code"]
+    code = [
+        c for c in json.loads(path.read_text(encoding="utf-8"))["cells"] if c["cell_type"] == "code"
+    ]
     ns: dict = {"__name__": "__main__"}
     cwd = os.getcwd()
     os.chdir(path.parent)
     try:
-        for cell in code[cells]:
+        for cell in code:
             src = "".join(cell["source"])
             if src.strip():
                 exec(compile(src, notebook, "exec"), ns)
@@ -62,15 +64,6 @@ def run(notebook: str, cells: slice = slice(None)) -> dict:
     finally:
         os.chdir(cwd)
     print(f"ran {notebook}")
-    return ns
-
-
-def link(target: Path, name: Path) -> None:
-    """Put a file where their notebooks expect it."""
-    if name.is_symlink():  # ours, possibly stale (repo moved): renew it
-        name.unlink()
-    if not name.exists():
-        name.symlink_to(target)
 
 
 # 1. raw data: not needed once the processed file exists
@@ -91,9 +84,13 @@ if not CODE.exists():
 
 # 3. their pretreatment: writes SCADA-FINAL.csv in their folder; we keep it in data/processed
 theirs = CODE / "SCADA" / "SCADA-FINAL.csv"
+if theirs.is_symlink():  # older versions linked it to PROCESSED: writing through it breaks both
+    theirs.unlink()
 if not PROCESSED.exists():
-    if not theirs.exists() or theirs.is_symlink():
-        link(RAW, CODE / "SCADA" / "SCADA-raw.csv")
+    if not theirs.exists():
+        raw_copy = CODE / "SCADA" / "SCADA-raw.csv"  # where their notebook reads it
+        raw_copy.unlink(missing_ok=True)  # also the symlink older versions made
+        shutil.copyfile(RAW, raw_copy)  # a copy: Windows allows symlinks only to admins
         run("SCADA/SCADA-pretreatment.ipynb")
     PROCESSED.parent.mkdir(parents=True, exist_ok=True)
     theirs.replace(PROCESSED)
